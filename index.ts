@@ -636,6 +636,7 @@ async function fetchJson(url: string, options?: RequestInit) {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${text.slice(0, 400)}`);
     return text ? JSON.parse(text) : {};
   } catch (e: any) {
+    if (e?.name === 'AbortError') throw new Error(`Request timeout: ${url.slice(0, 80)}`);
     throw new Error(`Fetch error for ${url}: ${e?.message ?? String(e)}`);
   } finally {
     clearTimeout(t);
@@ -4806,10 +4807,10 @@ async function runSellLimitMonitor() {
   }
 }
 
-// Run sell limit monitor every 30 seconds
-setInterval(() => {
-  runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
-}, 300_000);
+// Sell limit monitor disabled until paid RPC is available
+// setInterval(() => {
+//   runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
+// }, 300_000);
 
 // ── Startup ──────────────────────────────────────────────────────────────
 rebuildWalletFollowers();
