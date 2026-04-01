@@ -1,0 +1,146 @@
+{
+  "users": {
+    "7095748886": {
+      "userId": 7095748886,
+      "createdAt": "2026-03-02T20:13:58.441Z",
+      "wallets": [
+        {
+          "id": "25b8975126c30b12",
+          "name": "axiom",
+          "pubkey": "835okeYFfrK4efcg4NDZeiZRe1jjqAt9Ru16CzAqK9s",
+          "enc": "Ny4J+1loPA1yBg9TemaKd3mPQRb4T+e643Jk+5I2u1Qwiea4CRn9gevAoGgmTwb5h/74DqZE+W/KuMgB2g3UhQ==",
+          "iv": "eCxhR7413CcaNufe",
+          "tag": "U8XjIe3F1cKYm54O1fAhyw==",
+          "createdAt": "2026-03-02T20:13:58.441Z",
+          "isDefault": true,
+          "isManual": true
+        },
+        {
+          "id": "0405930411f3bf48",
+          "name": "wallet2",
+          "pubkey": "6mgAijxReREZqmHBoFxvmLA5iknj7VGGG3kKmUT5htCc",
+          "enc": "tQwFOhXKEScbdlTDXR2s+P5oNLTm5wqbh13xzMeBl03p4wqbKdBDovxt6SkLOVtB5zcfXaSblSVRBck9ddn1xg==",
+          "iv": "LwPtyM6UQGP2IlmI",
+          "tag": "yZzGZM787PL6Jz/YhXrCMw==",
+          "createdAt": "2026-03-02T20:25:21.946Z",
+          "isDefault": false,
+          "isManual": true
+        },
+        {
+          "id": "cf2c6e0b-7fbf-4da8-9f02-bc7ba732bc38",
+          "name": "phantom",
+          "pubkey": "9mtSAu1ktvQv9nA6wG7bjbdyQZYtWJjhDVByHtvQdSxV",
+          "enc": "Vdk4MXCyz+KXO5MqmUJHqPP8UciV0g6iaD+RpJhoroVPUYKKkMCw557odtoTYGg7K/sijOKH9IgJTHYEcHcRvA==",
+          "iv": "7GUTNVHgKqfTNd6i",
+          "tag": "a2oQzgLO0S9b+AyCXiCUAQ==",
+          "createdAt": "2026-03-10T21:07:12.658Z",
+          "isDefault": false,
+          "isManual": false
+        }
+      ],
+      "global": {
+        "antiMev": true,
+        "initialIncludesFees": true,
+        "monitorMode": "DETAILED",
+        "walletSelection": "SINGLE",
+        "degenMode": false,
+        "monitorDetailed": false,
+        "walletSelectionSingle": false
+      },
+      "buy": {
+        "confirmManualBuy": true,
+        "gasDeltaSol": 0.001,
+        "priceImpactPct": 25,
+        "slippagePct": 1,
+        "allowAutoBuy": false,
+        "duplicateBuy": false,
+        "checks": {
+          "minMcEnabled": true,
+          "minMc": 10000,
+          "maxMcEnabled": false,
+          "maxMc": 0,
+          "minLiquidityEnabled": false,
+          "minLiquidity": 0,
+          "maxLiquidityEnabled": false,
+          "maxLiquidity": 0
+        }
+      },
+      "sell": {
+        "confirmManualSell": false,
+        "gasDeltaSol": 0.005,
+        "priceImpactPct": 50,
+        "slippagePct": 2,
+        "autoPnlCard": true,
+        "durationHours": 24,
+        "invAndPayout": true,
+        "autoSellOnManualBuy": true,
+        "autoSellRetry": true,
+        "sellKbEnabled": false,
+        "stopLossEnabled": true,
+        "stopLossPct": 80,
+        "takeProfitEnabled": true,
+        "takeProfitPct": 50
+      },
+      "positions": [
+        {
+          "id": "0d8bc6427708fb74",
+          "mint": "ETezKA6nfhXAtz1PyA28WthDJXY5ddCgfjLNMWespump",
+          "createdAt": "2026-03-04T20:45:51.431Z",
+          "entrySpentSol": 0.05,
+          "entryTokenRaw": "28644158932",
+          "decimals": 6,
+          "status": "CLOSED",
+          "lastCheckAt": "2026-03-04T20:53:52.956Z",
+          "lastValueSol": 0.055313497,
+          "closedAt": "2026-03-04T20:53:54.508Z",
+          "closeSig": "SqDLV2J3cJvHpQeEP2JqFFHaEys7sAQEbxj1mmsBQkmqCEWW32CCvHtAR7UZxvbgNBrtepTDp6vV5ww9rQArp3c",
+          "closeReceivedSol": 0.055313497,
+          "closeReason": "TP"
+        },
+        {
+          "id": "e89c65a16bd55c07",
+          "mint": "ETezKA6nfhXAtz1PyA28WthDJXY5ddCgfjLNMWespump",
+          "createdAt": "2026-03-04T21:00:46.954Z",
+          "entrySpentSol": 0.05,
+          "entryTokenRaw": "25164465964",
+          "decimals": 6,
+          "status": "OPEN",
+          "lastCheckAt": "2026-03-04T21:12:13.224Z",
+          "lastValueSol": 0.039779253
+        },
+        {
+          "mint": "B3ZdSbL6U9QdJbtRPAXhioKXWN7dxcAimt7qpJeZpump",
+          "createdAt": 1773603592118
+        },
+        {
+          "mint": "G77QkBTs6y7G7szVenvfn8g3pSrqjtDbhNf1e1yEpump",
+          "createdAt": 1773603627352
+        },
+        {
+          "wallet": "wallet2",
+          "mint": "G77QkBTs6y7G7szVenvfn8g3pSrqjtDbhNf1e1yEpump",
+          "entry": 0,
+          "amount": 0,
+          "createdAt": 1773605660267
+        }
+      ],
+      "sellLimits": [],
+      "copytradeWallets": [
+        {
+          "id": "607609d951edb651",
+          "pubkey": "86AEJExyjeNNgcp7GrAvCXTDicf5aGWgoERbXFiG1EdD",
+          "enabled": true,
+          "createdAt": "2026-03-16T16:45:52.083Z"
+        }
+      ],
+      "referralCode": "4b2b6274",
+      "referredBy": null,
+      "referrals": {
+        "telegramReferrals": 0,
+        "webReferrals": 0,
+        "lifetimeSolEarned": 0,
+        "lifetimeBonkEarned": 0
+      }
+    }
+  }
+}
