@@ -4682,7 +4682,11 @@ if (!address) {
 
 console.log("✅ Starting bot...");
 
-bot.catch((err) => console.error("🔥 Telegraf error:", err));
+bot.catch((err: any) => {
+  if (err?.response?.error_code === 429) return; // ignore rate limit noise
+  if (err?.response?.error_code === 409) return; // ignore conflict noise
+  console.error("🔥 Telegraf error:", err?.message ?? err);
+});
 process.on("unhandledRejection", (err) => console.error("🔥 Unhandled rejection:", err));
 
 function encryptPrivateKey(secretKey: Uint8Array) {
