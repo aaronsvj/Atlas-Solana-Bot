@@ -66,6 +66,61 @@ const bot = new Telegraf(token);
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
 
 /* =========================
+   FEE COLLECTION — Jupiter Platform Fee + Accumulator Wallet
+========================= */
+
+const FEE_ACCUMULATOR_PUBKEY = process.env.FEE_ACCUMULATOR_PUBKEY ?? "69NC25VwwYhx51wkJYCo2umbjRv89ftwiFjyN6H1gMp6";
+const FEE_ACCUMULATOR_SECRET = process.env.FEE_ACCUMULATOR_SECRET ?? "";
+const PLATFORM_FEE_BPS = 100;
+const ADMIN_USER_ID = Number(process.env.ADMIN_USER_ID ?? "0");
+
+function getFeeAccumulatorKeypair(): Keypair | null {
+  try {
+    if (!FEE_ACCUMULATOR_SECRET) return null;
+    const arr = JSON.parse(FEE_ACCUMULATOR_SECRET);
+    return Keypair.fromSecretKey(Uint8Array.from(arr));
+  } catch { return null; }
+}
+
+async function creditReferrerFee(userId: number, feeSol: number): Promise<void> {
+  try {
+    const u = getUser(userId);
+    if (!u.referredBy) return;
+    const referrer = getUserByReferralCode(u.referredBy);
+    if (!referrer) return;
+    const userCreatedAt = new Date(u.createdAt).getTime();
+    if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
+    const referrerShare = feeSol * 0.20;
+    referrer.referrals.lifetimeSolEarned += referrerShare;
+    setUser(referrer);
+    console.log(`🎁 Referrer ${referrer.userId} credited ${referrerShare.toFixed(6)} SOL`);
+  } catch (e) { console.error("Referrer credit failed:", e); }
+}
+
+async function getFeeAccumulatorBalance(): Promise<number> {
+  try {
+    const lamports = await connection.getBalance(new PublicKey(FEE_ACCUMULATOR_PUBKEY));
+    return lamports / LAMPORTS_PER_SOL;
+  } catch { return 0; }
+}
+
+async function withdrawFees(toAddress: string, amountSol: number): Promise<string> {
+  const kp = getFeeAccumulatorKeypair();
+  if (!kp) throw new Error("Fee accumulator keypair not configured");
+  const lamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: kp.publicKey,
+      toPubkey: new PublicKey(toAddress),
+      lamports,
+    })
+  );
+  const sig = await sendAndConfirmTransaction(connection, tx, [kp], { commitment: "confirmed" });
+  console.log(`💸 Fee withdrawal: ${amountSol} SOL → ${toAddress} | tx: ${sig}`);
+  return sig;
+}
+
+/* =========================
    DB
 ========================= */
 
@@ -659,6 +714,8 @@ async function jupiterQuote(params: {
   url.searchParams.set("outputMint", params.outputMint);
   url.searchParams.set("amount", params.amount);
   url.searchParams.set("slippageBps", String(params.slippageBps));
+  url.searchParams.set("platformFeeBps", String(PLATFORM_FEE_BPS));
+  url.searchParams.set("feeAccount", FEE_ACCUMULATOR_PUBKEY);
   return fetchJson(url.toString(), { method: "GET" });
 }
 
@@ -4811,6 +4868,49 @@ async function runSellLimitMonitor() {
 // setInterval(() => {
 //   runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
 // }, 300_000);
+
+/* =========================
+   ADMIN COMMANDS
+========================= */
+
+bot.command("admin", async (ctx) => {
+  const userId = ctx.from!.id;
+  if (userId !== ADMIN_USER_ID) return;
+  const args = ctx.message.text.split(" ").slice(1);
+  const cmd = args[0];
+
+  if (cmd === "balance") {
+    const bal = await getFeeAccumulatorBalance();
+    await ctx.reply(`💰 *Fee Accumulator Balance*\n\nAddress: \`${FEE_ACCUMULATOR_PUBKEY}\`\nBalance: *${bal.toFixed(6)} SOL*`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (cmd === "withdraw") {
+    const toAddress = args[1];
+    const amount = parseFloat(args[2]);
+    if (!toAddress || isNaN(amount) || amount <= 0) { await ctx.reply("Usage: /admin withdraw <address> <amount_sol>"); return; }
+    try { new PublicKey(toAddress); } catch { await ctx.reply("❌ Invalid destination address."); return; }
+    const bal = await getFeeAccumulatorBalance();
+    if (amount > bal - 0.001) { await ctx.reply(`❌ Insufficient balance. Available: ${bal.toFixed(6)} SOL`); return; }
+    await ctx.reply(`⏳ Withdrawing ${amount} SOL...`);
+    try {
+      const sig = await withdrawFees(toAddress, amount);
+      await ctx.reply(`✅ *Withdrawal successful*\n\nAmount: *${amount} SOL*\nTo: \`${toAddress}\`\nTx: \`${sig}\``, { parse_mode: "Markdown" });
+    } catch (e: any) { await ctx.reply(`❌ Withdrawal failed: ${e?.message ?? String(e)}`); }
+    return;
+  }
+
+  if (cmd === "stats") {
+    const db = loadDB();
+    const userCount = Object.keys(db.users).length;
+    const totalCopytradeWallets = Object.values(db.users).reduce((acc: number, u: any) => acc + (u.copytradeWallets?.length ?? 0), 0);
+    const bal = await getFeeAccumulatorBalance();
+    await ctx.reply(`📊 *Bot Stats*\n\n👥 Total users: *${userCount}*\n🤖 Copytrade wallets: *${totalCopytradeWallets}*\n💰 Fee balance: *${bal.toFixed(6)} SOL*`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats`, { parse_mode: "Markdown" });
+});
 
 // ── Startup ──────────────────────────────────────────────────────────────
 rebuildWalletFollowers();
