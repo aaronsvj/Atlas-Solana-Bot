@@ -52,10 +52,15 @@ if (MASTER_KEY.length !== 32) {
   process.exit(1);
 }
 
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY || "";
+const HELIUS_WEBHOOK_ID = process.env.HELIUS_WEBHOOK_ID || "";
+
 console.log("🌐 RPC_URL =", RPC_URL);
 console.log("🪐 JUPITER_API_BASE =", JUPITER_API_BASE);
 console.log("🪐 JUPITER_API_KEY loaded =", JUPITER_API_KEY ? "YES" : "NO");
 console.log("🔑 BOT_TOKEN loaded =", token ? "YES" : "NO");
+console.log("🔔 HELIUS_API_KEY loaded =", HELIUS_API_KEY ? "YES" : "NO");
+console.log("🔔 HELIUS_WEBHOOK_ID =", HELIUS_WEBHOOK_ID || "(not set)");
 
 const bot = new Telegraf(token);
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
@@ -840,6 +845,41 @@ function rebuildWalletFollowers() {
     }
   }
   console.log(`✅ Rebuilt walletFollowers: ${count} active copytrade subscriptions`);
+}
+
+async function setHeliusWebhookAddresses(addresses: string[]) {
+  if (!HELIUS_API_KEY || !HELIUS_WEBHOOK_ID) {
+    console.warn("⚠️  HELIUS_API_KEY or HELIUS_WEBHOOK_ID not set — skipping webhook sync");
+    return;
+  }
+  const webhookURL = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/helius-webhook`
+    : `https://atlas-solana-bot-production.up.railway.app/helius-webhook`;
+
+  const res = await fetch(
+    `https://api.helius.xyz/v0/webhooks/${HELIUS_WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        webhookURL,
+        transactionTypes: ["SWAP"],
+        accountAddresses: addresses,
+        webhookType: "enhanced",
+      }),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`❌ Helius webhook update failed (${res.status}):`, text);
+  } else {
+    console.log(`✅ Helius webhook synced — ${addresses.length} address(es) → ${webhookURL}`);
+  }
+}
+
+async function syncHeliusWebhookFromDB() {
+  const addresses = Array.from(walletFollowers.keys());
+  await setHeliusWebhookAddresses(addresses);
 }
 
 function getBuyLimitDraft(userId: number): BuyLimitDraft {
@@ -4773,6 +4813,7 @@ setInterval(() => {
 
 // ── Startup ──────────────────────────────────────────────────────────────
 rebuildWalletFollowers();
+syncHeliusWebhookFromDB().catch(e => console.error("Helius sync error:", e));
 startWebhookServer(handleHeliusEvent);
 
 bot.launch({
