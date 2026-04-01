@@ -738,13 +738,14 @@ const walletFollowers = new Map<string, number[]>();
 
 // Balance cache — avoids hitting RPC on every menu render
 const balanceCache = new Map<string, { sol: number; ts: number }>();
-const BALANCE_TTL_MS = 30_000; // 30 seconds
+const BALANCE_TTL_MS = 60_000; // 60 seconds
 
 async function getCachedBalance(pubkey: string): Promise<number> {
   const now = Date.now();
   const cached = balanceCache.get(pubkey);
   if (cached && now - cached.ts < BALANCE_TTL_MS) return cached.sol;
   try {
+    await new Promise(r => setTimeout(r, 100));
     const lamports = await connection.getBalance(new PublicKey(pubkey));
     const sol = lamports / LAMPORTS_PER_SOL;
     balanceCache.set(pubkey, { sol, ts: now });
@@ -2294,15 +2295,6 @@ async function handleHeliusEvent(event: any) {
   const inputAmount = Number(input.tokenAmount);
   const outputAmount = Number(output.tokenAmount);
 
-  console.log("Swap detected:");
-  console.log({
-    wallet,
-    inputMint,
-    outputMint,
-    inputAmount,
-    outputAmount
-  });
-
   const SOL_MINT = "So11111111111111111111111111111111111111112";
 
   let side = "UNKNOWN";
@@ -2323,7 +2315,7 @@ async function handleHeliusEvent(event: any) {
 
   if (side === "UNKNOWN") return;
 
-  console.log("Trade:", side, tokenMint, solAmount);
+  if (side !== "UNKNOWN") console.log(`Trade ${side}: ${tokenMint} | ${solAmount} SOL | wallet: ${wallet}`);
 
   // Fire copytrade for all followers of this wallet
   const followers = walletFollowers.get(wallet);
@@ -4730,6 +4722,7 @@ function createWalletRecord(kp: Keypair): WalletRecord {
 
 async function runSellLimitMonitor() {
   const db = loadDB();
+  if (Object.keys(db.users).length === 0) return;
   for (const raw of Object.values(db.users)) {
     const u = raw as any;
     if (!u.sellLimits?.length || !u.positions?.length) continue;
@@ -4809,7 +4802,7 @@ async function runSellLimitMonitor() {
 // Run sell limit monitor every 30 seconds
 setInterval(() => {
   runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
-}, 30_000);
+}, 120_000);
 
 // ── Startup ──────────────────────────────────────────────────────────────
 rebuildWalletFollowers();
