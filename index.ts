@@ -745,7 +745,7 @@ async function getCachedBalance(pubkey: string): Promise<number> {
   const cached = balanceCache.get(pubkey);
   if (cached && now - cached.ts < BALANCE_TTL_MS) return cached.sol;
   try {
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, 500));
     const lamports = await connection.getBalance(new PublicKey(pubkey));
     const sol = lamports / LAMPORTS_PER_SOL;
     balanceCache.set(pubkey, { sol, ts: now });
@@ -4722,7 +4722,10 @@ function createWalletRecord(kp: Keypair): WalletRecord {
 
 async function runSellLimitMonitor() {
   const db = loadDB();
-  if (Object.keys(db.users).length === 0) return;
+  const hasAnyOrders = Object.values(db.users).some((u: any) =>
+    u.sellLimits?.length > 0 && u.positions?.length > 0
+  );
+  if (!hasAnyOrders) return;
   for (const raw of Object.values(db.users)) {
     const u = raw as any;
     if (!u.sellLimits?.length || !u.positions?.length) continue;
@@ -4802,7 +4805,7 @@ async function runSellLimitMonitor() {
 // Run sell limit monitor every 30 seconds
 setInterval(() => {
   runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
-}, 120_000);
+}, 300_000);
 
 // ── Startup ──────────────────────────────────────────────────────────────
 rebuildWalletFollowers();
