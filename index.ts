@@ -2463,6 +2463,20 @@ if (!def) {
     const priceStr = info ? fmtPrice(info.price) : "Unknown";
     const mcStr    = info ? fmtUsd(info.mc)      : "Unknown";
 
+    // Fetch live PnL for confirmation message
+    const fresh2 = getUser(userId);
+    const pos2 = (fresh2.positions ?? []).find((p: any) => p.mint === mint.toBase58() && p.wallet === (def.name ?? "wallet1"));
+    let pnlLine = "";
+    if (pos2 && pos2.entry > 0 && info) {
+      const holding2 = await getTokenHolding(new PublicKey(def.pubkey), mint).catch(() => null);
+      if (holding2 && holding2.uiAmount > 0) {
+        const currentValue = holding2.uiAmount * info.price;
+        const pnlPct = ((currentValue - pos2.entry) / pos2.entry) * 100;
+        const sign = pnlPct >= 0 ? "+" : "";
+        pnlLine = `\n📊 PnL: *${sign}${pnlPct.toFixed(2)}%* | Current value: *${fmtUsd(currentValue)}*`;
+      }
+    }
+
     const out =
       `✅ *Bought*\n\n` +
       `${info ? `*${info.name} (${info.symbol})*\n` : ""}` +
@@ -2470,7 +2484,8 @@ if (!def) {
       `Spent: *${solAmount} SOL*\n` +
       `Price: *${priceStr}*\n` +
       `MC: *${mcStr}*\n` +
-      `Slippage: *${u.buy.slippagePct.toFixed(2)}%*\n\n` +
+      `Slippage: *${u.buy.slippagePct.toFixed(2)}%*` +
+      pnlLine + `\n\n` +
       `🧾 Tx: \`${sig}\``;
 
     await ctx.telegram.editMessageText(
