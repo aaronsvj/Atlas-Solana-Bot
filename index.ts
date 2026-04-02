@@ -5484,8 +5484,8 @@ bot.command("refstats", async (ctx) => {
 
 // ── Startup ──────────────────────────────────────────────────────────────
 (async () => {
-  // Wait 5s for any previous instance to fully shut down
-  await new Promise(resolve => setTimeout(resolve, 5000));
+  // Wait 8s for any previous instance to fully shut down
+  await new Promise(resolve => setTimeout(resolve, 8000));
 
   rebuildWalletFollowers();
   syncHeliusWebhookFromDB().catch(e => console.error("Helius sync error:", e));
