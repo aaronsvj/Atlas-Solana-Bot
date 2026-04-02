@@ -1912,7 +1912,10 @@ function positionsKeyboard(userId: number) {
       Markup.button.callback("↩️ Return", "POS_RETURN"),
     ],
     [Markup.button.callback("📈 Add Position", "POS_ADD")],
-    [Markup.button.callback("🔄 Refresh", "POS_REFRESH")],
+    [
+      Markup.button.callback("🔄 Refresh", "POS_REFRESH"),
+      Markup.button.callback("🔁 Reset", "POS_RESET"),
+    ],
     [Markup.button.callback("⬇️ Select the wallet ⬇️", "NOOP")],
     walletButtons,
   ]);
