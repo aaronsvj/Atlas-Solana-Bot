@@ -4492,65 +4492,53 @@ bot.on("callback_query", async (ctx) => {
   }
 });
 
-// ── Export handlers — must be BEFORE catch-all callback_query ──
 const pendingExport = new Map<number, string>();
 
-bot.action(/^WP_EXPORT_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from!.id;
-  const walletId = (ctx.match as any)[1];
-  if (walletId === "CONFIRM" || walletId === "CANCEL") return;
-  const u = getUser(userId);
-  const wallet = u.wallets.find((w) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
-  if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
-  pendingExport.set(userId, walletId);
-  await ctx.reply(
-    `⚠️ *Export Private Key*\n\nYou are about to reveal the private key for *${wallet.name ?? "this wallet"}*.\n\n*Never share this with anyone.*\n\nTap confirm to reveal your key.`,
-    {
-      parse_mode: "Markdown",
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback("✅ Confirm — Show Key", "WP_EXPORT_CONFIRM")],
-        [Markup.button.callback("❌ Cancel", "WP_EXPORT_CANCEL")],
-      ]),
-    }
-  );
-});
-
-bot.action("WP_EXPORT_CANCEL", async (ctx) => {
-  await ctx.answerCbQuery("Cancelled.");
-  pendingExport.delete(ctx.from!.id);
-  try { await ctx.deleteMessage(); } catch {}
-});
-
-bot.action("WP_EXPORT_CONFIRM", async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from!.id;
-  const walletId = pendingExport.get(userId);
-  if (!walletId) { await ctx.reply("❌ Session expired. Try again."); return; }
-  pendingExport.delete(userId);
-  const u = getUser(userId);
-  const wallet = u.wallets.find((w) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
-  if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
-  try {
-    const kp = loadWalletKeypair(wallet);
-    const base58Key = bs58.encode(kp.secretKey);
-    try { await ctx.deleteMessage(); } catch {}
-    await ctx.reply(
-      `🔑 *Private Key for ${wallet.name ?? "wallet"}*\n\n\`${base58Key}\`\n\n⚠️ *Delete this message after copying.*`,
-      { parse_mode: "Markdown" }
-    );
-  } catch (e: any) {
-    await ctx.reply(`❌ Could not export key: ${e?.message ?? String(e)}`);
-  }
-});
-
-// ── catch-all bot.on("callback_query") below ──
+// ── catch-all bot.on("callback_query") ──
 bot.on("callback_query", async (ctx) => {
   const data = (ctx.callbackQuery as any)?.data as string | undefined;
   if (!data) return;
 
-  // Let bot.action() handlers deal with export callbacks
-  if (data === "WP_EXPORT_CONFIRM" || data === "WP_EXPORT_CANCEL" || data.startsWith("WP_EXPORT_")) return;
+  if (data === "WP_EXPORT_CONFIRM") {
+    await ctx.answerCbQuery();
+    const walletId = pendingExport.get(ctx.from!.id);
+    if (!walletId) { await ctx.reply("❌ Session expired. Try again."); return; }
+    pendingExport.delete(ctx.from!.id);
+    const u = getUser(ctx.from!.id);
+    const wallet = u.wallets.find((w: any) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
+    if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
+    try {
+      const kp = loadWalletKeypair(wallet);
+      const base58Key = bs58.encode(kp.secretKey);
+      try { await ctx.deleteMessage(); } catch {}
+      await ctx.reply(`🔑 *Private Key for ${wallet.name ?? "wallet"}*\n\n\`${base58Key}\`\n\n⚠️ *Delete this message after copying.*`, { parse_mode: "Markdown" });
+    } catch (e: any) { await ctx.reply(`❌ Could not export key: ${e?.message ?? String(e)}`); }
+    return;
+  }
+
+  if (data === "WP_EXPORT_CANCEL") {
+    await ctx.answerCbQuery("Cancelled.");
+    pendingExport.delete(ctx.from!.id);
+    try { await ctx.deleteMessage(); } catch {}
+    return;
+  }
+
+  if (data.startsWith("WP_EXPORT_")) {
+    await ctx.answerCbQuery();
+    const walletId = data.replace("WP_EXPORT_", "");
+    const u = getUser(ctx.from!.id);
+    const wallet = u.wallets.find((w: any) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
+    if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
+    pendingExport.set(ctx.from!.id, walletId);
+    await ctx.reply(
+      `⚠️ *Export Private Key*\n\nYou are about to reveal the private key for *${wallet.name ?? "this wallet"}*.\n\n*Never share this with anyone.*\n\nTap confirm to reveal your key.`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Confirm — Show Key", "WP_EXPORT_CONFIRM")],
+        [Markup.button.callback("❌ Cancel", "WP_EXPORT_CANCEL")],
+      ])}
+    );
+    return;
+  }
 
   if (data === "FLOW_CANCEL") {
     await ctx.answerCbQuery();
