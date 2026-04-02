@@ -4556,9 +4556,14 @@ bot.on("callback_query", async (ctx) => {
   }
 });
 
-bot.on("callback_query", async (ctx) => {
+bot.on("callback_query", async (ctx, next) => {
   const data = (ctx.callbackQuery as any)?.data as string | undefined;
   if (!data) return;
+
+  // Let named action handlers deal with these
+  if (data === "WP_EXPORT_CONFIRM" || data === "WP_EXPORT_CANCEL" || data.startsWith("WP_EXPORT_")) {
+    return next();
+  }
 
   if (data === "FLOW_CANCEL") {
     await ctx.answerCbQuery();
