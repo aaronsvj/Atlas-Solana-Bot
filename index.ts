@@ -809,6 +809,7 @@ async function jupiterQuote(params: {
   url.searchParams.set("outputMint", params.outputMint);
   url.searchParams.set("amount", params.amount);
   url.searchParams.set("slippageBps", String(params.slippageBps));
+  url.searchParams.set("platformFeeBps", "0");
   return fetchJson(url.toString(), { method: "GET" });
 }
 
