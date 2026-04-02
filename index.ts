@@ -1941,60 +1941,78 @@ function escapeXml(s: string) {
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const pnlSign = input.pnlPct >= 0 ? "+" : "";
+  const pnlColor = input.pnlPct >= 0 ? "#00E676" : "#FF5252";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(0)}%`;
+  const bgColor = input.pnlPct >= 0 ? "#0B1020" : "#1A0B0B";
 
   const svg = `
-  <svg width="1200" height="600" viewBox="0 0 1200 600" xmlns="http://www.w3.org/2000/svg">
+  <svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#0B1020"/>
+        <stop offset="0%" stop-color="${bgColor}"/>
         <stop offset="60%" stop-color="#1A0F2E"/>
         <stop offset="100%" stop-color="#0A2A2A"/>
       </linearGradient>
+      <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.08"/>
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0.03"/>
+      </linearGradient>
       <filter id="glow">
-        <feGaussianBlur stdDeviation="6" result="blur"/>
-        <feMerge>
-          <feMergeNode in="blur"/>
-          <feMergeNode in="SourceGraphic"/>
-        </feMerge>
+        <feGaussianBlur stdDeviation="8" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="shadow">
+        <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#000000" flood-opacity="0.5"/>
       </filter>
     </defs>
 
-    <rect width="1200" height="600" fill="url(#bg)"/>
-    <circle cx="160" cy="180" r="140" fill="#6E2BFF" opacity="0.12"/>
-    <circle cx="300" cy="260" r="220" fill="#00D5FF" opacity="0.08"/>
+    <!-- Background -->
+    <rect width="1200" height="630" fill="url(#bg)"/>
 
-    <rect x="70" y="105" width="260" height="260" rx="26" fill="#FFFFFF" opacity="0.08"/>
-    <text x="200" y="250" text-anchor="middle" font-family="Arial" font-size="22" fill="#FFFFFF" opacity="0.7">
-      (Your Mascot)
-    </text>
+    <!-- Glow orbs -->
+    <circle cx="100" cy="150" r="200" fill="${pnlColor}" opacity="0.06"/>
+    <circle cx="1100" cy="480" r="180" fill="#6E2BFF" opacity="0.08"/>
 
-    <text x="420" y="160" font-family="Arial" font-size="42" fill="#FFFFFF" font-weight="700">
-      ${escapeXml(input.username)}
-    </text>
+    <!-- Top bar -->
+    <rect x="0" y="0" width="1200" height="6" fill="${pnlColor}" opacity="0.8"/>
 
-    <text x="420" y="205" font-family="Arial" font-size="18" fill="#C6D0FF" opacity="0.9">
-      Held for: ${escapeXml(input.heldFor)} • Mint: ${escapeXml(input.mintShort)}
-    </text>
+    <!-- Bot branding -->
+    <text x="60" y="60" font-family="Arial" font-size="22" fill="${pnlColor}" font-weight="700" opacity="0.9">⚡ ATLAS | SOLANA</text>
+    <text x="1140" y="60" font-family="Arial" font-size="18" fill="#ffffff" opacity="0.4" text-anchor="end">t.me/SolPilotBot</text>
 
-    <text x="420" y="310" font-family="Arial" font-size="92" fill="#00E676" font-weight="800" filter="url(#glow)">
-      ${escapeXml(pnlPctText)}
-    </text>
+    <!-- Token name -->
+    <text x="60" y="130" font-family="Arial" font-size="38" fill="#ffffff" font-weight="700">${escapeXml(input.mintShort)}</text>
 
-    <rect x="420" y="350" width="680" height="170" rx="22" fill="#FFFFFF" opacity="0.08"/>
+    <!-- PnL percentage - BIG -->
+    <text x="60" y="280" font-family="Arial" font-size="160" fill="${pnlColor}" font-weight="900" filter="url(#glow)" opacity="0.95">${escapeXml(pnlPctText)}</text>
 
-    <text x="460" y="410" font-family="Arial" font-size="22" fill="#FFFFFF" font-weight="700">PnL</text>
-    <text x="460" y="445" font-family="Arial" font-size="20" fill="#C6D0FF">PnL (SOL):</text>
-    <text x="620" y="445" font-family="Arial" font-size="20" fill="#FFFFFF">${input.pnlSol.toFixed(6)} SOL</text>
-    <text x="460" y="480" font-family="Arial" font-size="20" fill="#C6D0FF">Value now:</text>
-    <text x="620" y="480" font-family="Arial" font-size="20" fill="#FFFFFF">${input.valueSol.toFixed(6)} SOL</text>
-    <text x="820" y="445" font-family="Arial" font-size="20" fill="#C6D0FF">Cost:</text>
-    <text x="900" y="445" font-family="Arial" font-size="20" fill="#FFFFFF">${input.costSol.toFixed(6)} SOL</text>
-    <text x="70" y="545" font-family="Arial" font-size="18" fill="#C6D0FF" opacity="0.8">
-      YourBot • Trading Made Easier
-    </text>
-  </svg>
-  `.trim();
+    <!-- Divider -->
+    <line x1="60" y1="320" x2="1140" y2="320" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>
+
+    <!-- Stats card -->
+    <rect x="60" y="345" width="500" height="180" rx="16" fill="url(#card)" filter="url(#shadow)"/>
+    <rect x="620" y="345" width="520" height="180" rx="16" fill="url(#card)" filter="url(#shadow)"/>
+
+    <!-- Left card content -->
+    <text x="90" y="385" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">INVESTED</text>
+    <text x="90" y="420" font-family="Arial" font-size="28" fill="#ffffff" font-weight="700">${input.costSol.toFixed(4)} SOL</text>
+
+    <text x="90" y="465" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">RETURNED</text>
+    <text x="90" y="500" font-family="Arial" font-size="28" fill="${pnlColor}" font-weight="700">${input.valueSol.toFixed(4)} SOL</text>
+
+    <!-- Right card content -->
+    <text x="650" y="385" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">PnL (SOL)</text>
+    <text x="650" y="420" font-family="Arial" font-size="28" fill="${pnlColor}" font-weight="700">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
+
+    <text x="650" y="465" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">HELD FOR</text>
+    <text x="650" y="500" font-family="Arial" font-size="28" fill="#ffffff" font-weight="700">${escapeXml(input.heldFor)}</text>
+
+    <!-- Username -->
+    <text x="60" y="590" font-family="Arial" font-size="20" fill="#ffffff" opacity="0.6">@${escapeXml(input.username)}</text>
+
+    <!-- Watermark -->
+    <text x="1140" y="590" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.25" text-anchor="end">Trade smarter with Atlas | Solana</text>
+  </svg>`.trim();
 
   return await sharp(Buffer.from(svg)).png().toBuffer();
 }
@@ -4249,6 +4267,43 @@ bot.on("callback_query", async (ctx) => {
         out,
         { parse_mode: "Markdown" }
       );
+
+      // Auto-generate PnL card if enabled
+      if (u.sell.autoPnlCard) {
+        try {
+          const solReceived = Number(quote.outAmount ?? 0) / LAMPORTS_PER_SOL;
+          const entryPos = (u.positions ?? []).find((p: any) => p.mint === mint.toBase58());
+          const entrySol = entryPos?.entry || solReceived;
+          const pnlSol = solReceived - entrySol;
+          const pnlPct = entrySol > 0 ? ((solReceived - entrySol) / entrySol) * 100 : 0;
+          const info = await fetchTokenInfo(mint.toBase58()).catch(() => null);
+          const username = ctx.from?.username ?? `User${userId}`;
+
+          const png = await renderPnlCardPng({
+            username,
+            mintShort: info ? `${info.name} (${info.symbol})` : shortAddr(mint.toBase58(), 6, 4),
+            heldFor: entryPos?.createdAt
+              ? (() => {
+                  const ms = Date.now() - (entryPos.createdAt as number);
+                  const h = Math.floor(ms / 3600000);
+                  const m = Math.floor((ms % 3600000) / 60000);
+                  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+                })()
+              : "Unknown",
+            pnlPct,
+            pnlSol,
+            valueSol: solReceived,
+            costSol: entrySol,
+          });
+
+          await ctx.replyWithPhoto(
+            { source: png },
+            { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
+          );
+        } catch (pnlErr) {
+          console.error("PnL card generation failed:", pnlErr);
+        }
+      }
     } catch (e: any) {
       console.error("Sell error:", e);
       await ctx.telegram.editMessageText(
