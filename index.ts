@@ -2005,29 +2005,50 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const pnlColor = input.pnlPct >= 0 ? "#1a8cff" : "#ff4444";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
 
-  const svg = `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
-    <rect width="900" height="500" fill="#080c14"/>
-    <ellipse cx="820" cy="80" rx="220" ry="160" fill="#ffffff" opacity="0.04"/>
-    <ellipse cx="750" cy="420" rx="180" ry="120" fill="#ffffff" opacity="0.03"/>
-    <rect x="0" y="0" width="5" height="500" fill="${pnlColor}"/>
-    <text x="48" y="68" font-family="Poppins,DejaVu Sans,sans-serif" font-size="13" fill="${pnlColor}" font-weight="700" letter-spacing="4">ATLAS | SOLANA</text>
-    <text x="48" y="112" font-family="Poppins,DejaVu Sans,sans-serif" font-size="36" fill="#ffffff" font-weight="700">${escapeXml(input.mintShort)}</text>
-    <text x="48" y="144" font-family="Poppins,DejaVu Sans,sans-serif" font-size="14" fill="#4a5568">Held for ${escapeXml(input.heldFor)}</text>
-    <rect x="48" y="162" width="80" height="2" fill="${pnlColor}" opacity="0.6"/>
-    <text x="44" y="298" font-family="Poppins,DejaVu Sans,sans-serif" font-size="152" fill="${pnlColor}" font-weight="900">${escapeXml(pnlPctText)}</text>
-    <rect x="48" y="322" width="600" height="1" fill="#ffffff" opacity="0.08"/>
-    <text x="48" y="358" font-family="Poppins,DejaVu Sans,sans-serif" font-size="11" fill="#4a5568" letter-spacing="2.5">INVESTED</text>
-    <text x="48" y="390" font-family="Poppins,DejaVu Sans,sans-serif" font-size="27" fill="#ffffff" font-weight="700">${input.costSol.toFixed(4)} SOL</text>
-    <text x="270" y="358" font-family="Poppins,DejaVu Sans,sans-serif" font-size="11" fill="#4a5568" letter-spacing="2.5">PAYOUT</text>
-    <text x="270" y="390" font-family="Poppins,DejaVu Sans,sans-serif" font-size="27" fill="${pnlColor}" font-weight="700">${input.valueSol.toFixed(4)} SOL</text>
-    <text x="492" y="358" font-family="Poppins,DejaVu Sans,sans-serif" font-size="11" fill="#4a5568" letter-spacing="2.5">PNL</text>
-    <text x="492" y="390" font-family="Poppins,DejaVu Sans,sans-serif" font-size="27" fill="${pnlColor}" font-weight="700">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
-    <rect x="0" y="448" width="900" height="52" fill="#0d1420"/>
-    <text x="48" y="480" font-family="Poppins,DejaVu Sans,sans-serif" font-size="14" fill="#ffffff" opacity="0.5">@${escapeXml(input.username)}</text>
-    <text x="852" y="480" font-family="Poppins,DejaVu Sans,sans-serif" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="600">@AtlasSolanaTrading</text>
-  </svg>`.trim();
+  // Build card as pure raster using sharp composite layers
+  const width = 900;
+  const height = 500;
 
-  return await sharp(Buffer.from(svg)).png().toBuffer();
+  // Background
+  const base = await sharp({
+    create: { width, height, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } }
+  }).png().toBuffer();
+
+  // White bubble top right
+  const bubble1 = Buffer.from(`<svg width="${width}" height="${height}"><ellipse cx="820" cy="80" rx="220" ry="160" fill="white" opacity="0.04"/><ellipse cx="750" cy="420" rx="180" ry="120" fill="white" opacity="0.03"/></svg>`);
+
+  // Left accent bar
+  const accentColor = input.pnlPct >= 0 ? { r: 26, g: 140, b: 255 } : { r: 255, g: 68, b: 68 };
+  const accent = await sharp({ create: { width: 5, height, channels: 3, background: accentColor } }).png().toBuffer();
+
+  // Bottom bar
+  const bottomBar = await sharp({ create: { width, height: 52, channels: 3, background: { r: 13, g: 20, b: 32 } } }).png().toBuffer();
+
+  // SVG text overlay — use DejaVu Sans which IS on Railway
+  const textSvg = Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <text x="48" y="68" font-family="DejaVu Sans" font-size="13" fill="${pnlColor}" font-weight="bold" letter-spacing="4">ATLAS | SOLANA</text>
+    <text x="48" y="112" font-family="DejaVu Sans" font-size="36" fill="white" font-weight="bold">${escapeXml(input.mintShort)}</text>
+    <text x="48" y="144" font-family="DejaVu Sans" font-size="14" fill="#4a5568">Held for ${escapeXml(input.heldFor)}</text>
+    <text x="44" y="298" font-family="DejaVu Sans" font-size="148" fill="${pnlColor}" font-weight="bold">${escapeXml(pnlPctText)}</text>
+    <text x="48" y="358" font-family="DejaVu Sans" font-size="11" fill="#4a5568">INVESTED</text>
+    <text x="48" y="390" font-family="DejaVu Sans" font-size="27" fill="white" font-weight="bold">${input.costSol.toFixed(4)} SOL</text>
+    <text x="270" y="358" font-family="DejaVu Sans" font-size="11" fill="#4a5568">PAYOUT</text>
+    <text x="270" y="390" font-family="DejaVu Sans" font-size="27" fill="${pnlColor}" font-weight="bold">${input.valueSol.toFixed(4)} SOL</text>
+    <text x="492" y="358" font-family="DejaVu Sans" font-size="11" fill="#4a5568">PNL</text>
+    <text x="492" y="390" font-family="DejaVu Sans" font-size="27" fill="${pnlColor}" font-weight="bold">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
+    <text x="48" y="480" font-family="DejaVu Sans" font-size="14" fill="white" opacity="0.5">@${escapeXml(input.username)}</text>
+    <text x="852" y="480" font-family="DejaVu Sans" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="bold">@AtlasSolanaTrading</text>
+  </svg>`);
+
+  return await sharp(base)
+    .composite([
+      { input: bubble1, top: 0, left: 0 },
+      { input: accent, top: 0, left: 0 },
+      { input: bottomBar, top: 448, left: 0 },
+      { input: textSvg, top: 0, left: 0 },
+    ])
+    .png()
+    .toBuffer();
 }
 
 /* =========================
