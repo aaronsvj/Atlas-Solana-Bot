@@ -2412,6 +2412,16 @@ if (!def) {
     const amountLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
     if (amountLamports <= 0n) throw new Error("Amount too small.");
 
+    // Check wallet has enough SOL (buy amount + 0.01 buffer for fees/rent)
+    const walletBalance = await connection.getBalance(new PublicKey(def.pubkey));
+    const walletSol = walletBalance / LAMPORTS_PER_SOL;
+    const required = solAmount + 0.01;
+    if (walletSol < required) {
+      throw new Error(
+        `Insufficient balance. You have *${walletSol.toFixed(4)} SOL* but need ~*${required.toFixed(4)} SOL* (${solAmount} + ~0.01 for fees).\n\nFund your wallet first.`
+      );
+    }
+
     const quote = await jupiterQuote({
       inputMint: WSOL_MINT,
       outputMint: mint.toBase58(),
@@ -4244,7 +4254,7 @@ function sellTokenKeyboard(userId: number) {
     [
       Markup.button.callback("🔄 Refresh", "ST_REFRESH"),
       Markup.button.callback("📊 Sell Limits", "ST_SELL_LIMITS"),
-      Markup.button.callback("↩️ Return", "ST_RETURN"),
+      Markup.button.callback("↩️ Buy", "ST_RETURN"),
     ],
     [
       Markup.button.callback(`💳 ${def?.name ?? "wallet"}`, "ST_WALLET"),
@@ -4403,7 +4413,7 @@ bot.action("ST_REFRESH", async (ctx) => {
 
 bot.action("ST_RETURN", async (ctx) => {
   await ctx.answerCbQuery();
-  await showHomeMenu(ctx, ctx.from!.id);
+  await showBuyTokenMenu(ctx, ctx.from!.id);
 });
 
 bot.action("ST_WALLET", async (ctx) => {
