@@ -1,5 +1,2 @@
-[phases.setup]
-nixPkgs = ["wkhtmltopdf_0_12_6"]
-
 [phases.build]
 cmds = ["npm install"]
