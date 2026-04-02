@@ -721,44 +721,43 @@ async function buildReferralText(userId: number) {
   const u = getUser(userId);
   const botUsername = await getBotUsername();
   const refLink = `https://t.me/${botUsername}?start=ref_${u.referralCode}`;
+  const shareText = encodeURIComponent(`🚀 I'm trading Solana tokens with Atlas — the fastest Telegram trading bot!\n\nJoin with my link and we both earn:`);
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${shareText}`;
 
-  // Count how many users this person has referred
   const db = loadDB();
+  let totalReferrals = 0;
   let activeReferrals = 0;
-  let pendingEarnings = 0;
   for (const raw of Object.values(db.users)) {
     const ru = raw as any;
     if (ru.referredBy === u.referralCode) {
-      activeReferrals++;
-      // Check if still in 30 day window
+      totalReferrals++;
       const createdAt = new Date(ru.createdAt).getTime();
-      if (Date.now() - createdAt < 30 * 24 * 60 * 60 * 1000) {
-        pendingEarnings++;
-      }
+      if (Date.now() - createdAt < 30 * 24 * 60 * 60 * 1000) activeReferrals++;
     }
   }
 
-  return (
-    `🤝 *Referral Program*\n\n` +
-    `Your referral link:\n\`${refLink}\`\n\n` +
-    `📊 *Your Stats*\n` +
-    `Total referrals: *${activeReferrals}*\n` +
-    `Active (earning): *${pendingEarnings}* (within 30 days)\n` +
-    `Lifetime SOL earned: *${u.referrals.lifetimeSolEarned.toFixed(6)} SOL*\n\n` +
-    `💰 *How it works*\n` +
-    `• Share your link with traders\n` +
-    `• You earn *20% of all fees* they generate\n` +
-    `• Paid automatically to your default wallet\n` +
-    `• Valid for the first *30 days* per referral\n\n` +
-    `⚡ *For channel owners*\n` +
-    `Running a Solana signal channel? DM us at atlassolanabot@gmail.com for a custom partnership deal.\n\n` +
-    `🔗 Share your link and start earning!`
-  );
+  return {
+    text:
+      `🌟 *Atlas Referral Program*\n\n` +
+      `Earn *20% of all fees* from every trader you refer — paid automatically in SOL.\n\n` +
+      `🔗 *Your link:*\n\`${refLink}\`\n\n` +
+      `📊 *Your Stats*\n` +
+      `┌ Total referrals: *${totalReferrals}*\n` +
+      `├ Active (30d window): *${activeReferrals}*\n` +
+      `└ Lifetime earned: *${u.referrals.lifetimeSolEarned.toFixed(4)} SOL*\n\n` +
+      `💡 *How it works*\n` +
+      `• Share your link — friend opens the bot\n` +
+      `• You earn 20% of their fees for 30 days\n` +
+      `• Paid instantly to your default wallet\n\n` +
+      `📢 Running a Solana channel? Email us for a custom deal:\natlassolanabot@gmail.com`,
+    shareUrl,
+  };
 }
 
-function referralKeyboard() {
+function referralKeyboard(shareUrl: string) {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("Close", "REF_CLOSE")],
+    [Markup.button.url("📤 Share My Link", shareUrl)],
+    [Markup.button.callback("↩️ Close", "REF_CLOSE")],
   ]);
 }
 
@@ -2340,14 +2339,16 @@ async function showPositionsMenu(ctx: any, userId: number) {
 }
 
 async function showReferralMenu(ctx: any, userId: number) {
-  const text = await buildReferralText(userId);
+  const { text, shareUrl } = await buildReferralText(userId);
   try {
     await ctx.editMessageText(text, {
-      ...referralKeyboard(),
+      parse_mode: "Markdown",
+      ...referralKeyboard(shareUrl),
     });
   } catch {
     await ctx.reply(text, {
-      ...referralKeyboard(),
+      parse_mode: "Markdown",
+      ...referralKeyboard(shareUrl),
     });
   }
 }
@@ -5464,14 +5465,20 @@ bot.command("refstats", async (ctx) => {
     }
   }
 
+  const shareText = encodeURIComponent(`🚀 I'm trading Solana tokens with Atlas — the fastest Telegram trading bot!\n\nJoin with my link and we both earn:`);
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${shareText}`;
+
   await ctx.reply(
     `📊 *Your Referral Stats*\n\n` +
-    `Your link: \`${refLink}\`\n\n` +
-    `Total referrals: *${totalReferrals}*\n` +
-    `Active (30d window): *${activeReferrals}*\n` +
-    `Lifetime earned: *${u.referrals.lifetimeSolEarned.toFixed(6)} SOL*\n\n` +
+    `🔗 *Your link:*\n\`${refLink}\`\n\n` +
+    `┌ Total referrals: *${totalReferrals}*\n` +
+    `├ Active (30d window): *${activeReferrals}*\n` +
+    `└ Lifetime earned: *${u.referrals.lifetimeSolEarned.toFixed(4)} SOL*\n\n` +
     `Payouts are automatic — sent to your default wallet after every trade your referrals make.`,
-    { parse_mode: "Markdown" }
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.url("📤 Share My Link", shareUrl)]]),
+    }
   );
 });
 
