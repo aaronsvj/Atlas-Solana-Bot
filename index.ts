@@ -4549,6 +4549,9 @@ bot.on("callback_query", async (ctx) => {
   const data = (ctx.callbackQuery as any)?.data as string | undefined;
   if (!data) return;
 
+  // Let bot.action() handlers deal with export callbacks
+  if (data === "WP_EXPORT_CONFIRM" || data === "WP_EXPORT_CANCEL" || data.startsWith("WP_EXPORT_")) return;
+
   if (data === "FLOW_CANCEL") {
     await ctx.answerCbQuery();
     const userId = ctx.from!.id;
