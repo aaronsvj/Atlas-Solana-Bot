@@ -4526,7 +4526,9 @@ bot.on("callback_query", async (ctx) => {
   if (data.startsWith("WP_EXPORT_")) {
     await ctx.answerCbQuery();
     const walletId = data.replace("WP_EXPORT_", "");
+    console.log(`🔑 Export triggered: walletId=${walletId}, userId=${ctx.from!.id}`);
     const u = getUser(ctx.from!.id);
+    console.log(`🔑 Wallets: ${u.wallets.map((w: any) => `id=${w.id} name=${w.name}`).join(", ")}`);
     const wallet = u.wallets.find((w: any) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
     if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
     pendingExport.set(ctx.from!.id, walletId);
