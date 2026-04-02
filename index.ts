@@ -3873,48 +3873,9 @@ bot.action("BT_GO_SELL", async (ctx) => {
   await ctx.answerCbQuery();
   const userId = ctx.from!.id;
   const mintStr = activeBuyMint.get(userId);
-
-  if (!mintStr) {
-    await ctx.reply("❌ No active token selected.");
-    return;
-  }
-
-  let mint: PublicKey;
-  try {
-    mint = new PublicKey(mintStr);
-  } catch {
-    await ctx.reply("❌ Invalid active token.");
-    return;
-  }
-
-  const def = getDefaultWallet(userId);
-  if (!def) {
-    await ctx.reply("Tap Wallet first to create your trading wallet.", { ...bonkMainMenu() });
-    return;
-  }
-
-  try {
-    const owner = new PublicKey(def.pubkey);
-    const holding = await getTokenHolding(owner, mint);
-
-    if (!holding || BigInt(holding.amountRaw) <= 0n) {
-      await ctx.reply(
-        `✅ CA received:\n\`${mint.toBase58()}\`\n\n❌ You have *0* of this token in your custodial wallet.`,
-        { parse_mode: "Markdown", ...bonkMainMenu() }
-      );
-      return;
-    }
-
-    await ctx.reply(
-      `✅ CA received:\n\`${mint.toBase58()}\`\n\nYour balance: *${holding.uiAmount}*\nChoose how much to sell:`,
-      { parse_mode: "Markdown", ...sellPercentButtons(mint.toBase58()) }
-    );
-  } catch (e: any) {
-    await ctx.reply(
-      `Could not read token balance.\n${e?.message ?? String(e)}`,
-      { ...bonkMainMenu() }
-    );
-  }
+  if (!mintStr) { await ctx.answerCbQuery("No active token"); return; }
+  activeSellMint.set(userId, mintStr);
+  await showSellTokenMenu(ctx, userId);
 });
 
 bot.action("BT_WALLET", async (ctx) => {
@@ -4239,6 +4200,221 @@ bot.action("MENU_QUICKSELL", async (ctx) => {
 });
 
 /* =========================
+   SELL TOKEN SCREEN
+========================= */
+
+const activeSellMint = new Map<number, string>();
+
+function sellTokenKeyboard(userId: number) {
+  const u = getUser(userId);
+  const isMulti = u.global.walletSelection === "MULTI";
+  const def = getDefaultWallet(userId);
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("🔄 Refresh", "ST_REFRESH"),
+      Markup.button.callback("📊 Sell Limits", "ST_SELL_LIMITS"),
+      Markup.button.callback("↩️ Return", "ST_RETURN"),
+    ],
+    [
+      Markup.button.callback(`💳 ${def?.name ?? "wallet"}`, "ST_WALLET"),
+      Markup.button.callback(isMulti ? "🔴 Multi" : "⬜ Multi", "ST_TOGGLE_MULTI"),
+    ],
+    [
+      Markup.button.callback("25%", "ST_PCT_25"),
+      Markup.button.callback("50%", "ST_PCT_50"),
+      Markup.button.callback("100%", "ST_PCT_100"),
+    ],
+    [
+      Markup.button.callback("Sell X%", "ST_SELL_X_PCT"),
+    ],
+    [
+      Markup.button.callback(`ⓑ Slippage | ${u.sell.slippagePct}%`, "ST_SLIPPAGE"),
+      Markup.button.callback(`ⓑ Gas | ${u.sell.gasDeltaSol} SOL`, "ST_GAS"),
+    ],
+  ]);
+}
+
+async function buildSellTokenText(userId: number) {
+  const mint = activeSellMint.get(userId);
+  const u = getUser(userId);
+  const def = getDefaultWallet(userId);
+
+  if (!mint || !def) {
+    return `🔗 *SOL*\n\nNo active token selected.\nPaste a CA first.`;
+  }
+
+  const [holding, info] = await Promise.all([
+    getTokenHolding(new PublicKey(def.pubkey), new PublicKey(mint)).catch(() => null),
+    fetchTokenInfo(mint).catch(() => null),
+  ]);
+
+  const mcStr  = info ? fmtUsd(info.mc)       : "Unknown";
+  const prStr  = info ? fmtPrice(info.price)   : "Unknown";
+  const liqStr = info ? fmtUsd(info.liquidity) : "Unknown";
+  const name   = info ? `${info.name} (${info.symbol})` : shortAddr(mint, 12, 8);
+  const bal    = holding?.uiAmount ?? 0;
+
+  // PnL line
+  const pos = (u.positions ?? []).find((p: any) => p.mint === mint && p.wallet === def.name);
+  let pnlLine = "";
+  if (pos && pos.entry > 0 && info && bal > 0) {
+    const currentValue = bal * info.price;
+    const pnlPct = ((currentValue - pos.entry) / pos.entry) * 100;
+    const sign = pnlPct >= 0 ? "+" : "";
+    pnlLine = `\n📊 PnL: *${sign}${pnlPct.toFixed(2)}%* | Entry: ${fmtUsd(pos.entry)}`;
+  }
+
+  return (
+    `🌕 *${name}*  🔗 *SOL*\n` +
+    `\`${mint}\`\n\n` +
+    `🗳 MC *${mcStr}* | 💵 Price *${prStr}*\n` +
+    `💧 Liquidity *${liqStr}*\n` +
+    `🕒 Live prices via DexScreener\n\n` +
+    `💼 Balance: *${bal.toLocaleString()} ${info?.symbol ?? ""}*` +
+    pnlLine + `\n\n` +
+    `💰 *${def.name}* | Slippage: ${u.sell.slippagePct}% | Gas: ${u.sell.gasDeltaSol} SOL`
+  );
+}
+
+async function showSellTokenMenu(ctx: any, userId: number) {
+  const text = await buildSellTokenText(userId);
+  try {
+    await ctx.editMessageText(text, {
+      parse_mode: "Markdown",
+      ...sellTokenKeyboard(userId),
+    });
+  } catch {
+    await ctx.reply(text, {
+      parse_mode: "Markdown",
+      ...sellTokenKeyboard(userId),
+    });
+  }
+}
+
+async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) {
+  const mintStr = activeSellMint.get(userId);
+  if (!mintStr) { await ctx.reply("❌ No active sell token."); return; }
+  const u = getUser(userId);
+  const def = getDefaultWallet(userId);
+  if (!def) { await ctx.reply("No wallet found."); return; }
+
+  const mint = new PublicKey(mintStr);
+  const loading = await ctx.reply(`⏳ Selling ${pct}%...`);
+
+  try {
+    const holding = await getTokenHolding(new PublicKey(def.pubkey), mint);
+    if (!holding) throw new Error("No token account found.");
+    const totalRaw = BigInt(holding.amountRaw);
+    if (totalRaw <= 0n) throw new Error("Token balance is 0.");
+    const sellRaw = (totalRaw * BigInt(pct)) / 100n;
+    if (sellRaw <= 0n) throw new Error("Sell amount too small.");
+
+    const userKp = loadWalletKeypair(def);
+    const quote = await jupiterQuote({
+      inputMint: mintStr,
+      outputMint: WSOL_MINT,
+      amount: sellRaw.toString(),
+      slippageBps: slippageBpsFromPct(u.sell.slippagePct),
+    });
+    const swap = await jupiterSwap({ userPublicKey: def.pubkey, quoteResponse: quote });
+    const swapTxB64 = (swap as any)?.swapTransaction;
+    if (!swapTxB64) throw new Error("No swapTransaction returned.");
+    const sig = await signAndSendSwapTx(userKp, swapTxB64);
+
+    const solReceived = Number(quote.outAmount ?? 0) / LAMPORTS_PER_SOL;
+    collectFee(userKp, solReceived, userId, "SELL").catch(() => {});
+
+    await ctx.telegram.editMessageText(
+      loading.chat.id, loading.message_id, undefined,
+      `✅ *Sold ${pct}%*\n\nMint:\n\`${mintStr}\`\nReceived: *${solReceived.toFixed(4)} SOL*\n\n🧾 Tx:\n\`${sig}\``,
+      { parse_mode: "Markdown" }
+    );
+
+    // Auto PnL card
+    if (u.sell.autoPnlCard) {
+      try {
+        const entryPos = (u.positions ?? []).find((p: any) => p.mint === mintStr);
+        const entrySol = entryPos?.entry || solReceived;
+        const pnlSol = solReceived - entrySol;
+        const pnlPct = entrySol > 0 ? ((solReceived - entrySol) / entrySol) * 100 : 0;
+        const info = await fetchTokenInfo(mintStr).catch(() => null);
+        const username = ctx.from?.username ?? `User${userId}`;
+        const png = await renderPnlCardPng({
+          username,
+          mintShort: info ? `${info.name} (${info.symbol})` : shortAddr(mintStr, 6, 4),
+          heldFor: entryPos?.createdAt
+            ? (() => { const ms = Date.now() - (entryPos.createdAt as number); const h = Math.floor(ms/3600000); const m = Math.floor((ms%3600000)/60000); return h > 0 ? `${h}h ${m}m` : `${m}m`; })()
+            : "Unknown",
+          pnlPct, pnlSol, valueSol: solReceived, costSol: entrySol,
+        });
+        await ctx.replyWithPhoto(
+          { source: png },
+          { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
+        );
+      } catch {}
+    }
+  } catch (e: any) {
+    await ctx.telegram.editMessageText(
+      loading.chat.id, loading.message_id, undefined,
+      `❌ Sell failed:\n${e?.message ?? String(e)}`
+    );
+  }
+}
+
+// Sell Token Screen Actions
+bot.action("ST_REFRESH", async (ctx) => {
+  await ctx.answerCbQuery("🔄 Refreshing...");
+  const userId = ctx.from!.id;
+  const mint = activeSellMint.get(userId);
+  if (mint) tokenInfoCache.delete(mint);
+  await showSellTokenMenu(ctx, userId);
+});
+
+bot.action("ST_RETURN", async (ctx) => {
+  await ctx.answerCbQuery();
+  await showHomeMenu(ctx, ctx.from!.id);
+});
+
+bot.action("ST_WALLET", async (ctx) => {
+  await ctx.answerCbQuery("Wallet switching coming soon");
+});
+
+bot.action("ST_TOGGLE_MULTI", async (ctx) => {
+  await ctx.answerCbQuery();
+  const u = getUser(ctx.from!.id);
+  u.global.walletSelection = u.global.walletSelection === "SINGLE" ? "MULTI" : "SINGLE";
+  setUser(u);
+  await showSellTokenMenu(ctx, u.userId);
+});
+
+bot.action("ST_PCT_25",  async (ctx) => { await ctx.answerCbQuery(); await executeSellFromActiveMint(ctx, ctx.from!.id, 25);  });
+bot.action("ST_PCT_50",  async (ctx) => { await ctx.answerCbQuery(); await executeSellFromActiveMint(ctx, ctx.from!.id, 50);  });
+bot.action("ST_PCT_100", async (ctx) => { await ctx.answerCbQuery(); await executeSellFromActiveMint(ctx, ctx.from!.id, 100); });
+
+bot.action("ST_SELL_X_PCT", async (ctx) => {
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_SELL_X_PCT" as any);
+  await ctx.reply("Enter the percentage to sell (1-100):");
+});
+
+bot.action("ST_SELL_LIMITS", async (ctx) => {
+  await ctx.answerCbQuery();
+  await showSellLimitsMenu(ctx, ctx.from!.id);
+});
+
+bot.action("ST_SLIPPAGE", async (ctx) => {
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_SET_SELL_SLIPPAGE");
+  await ctx.reply("Enter new sell slippage % (e.g. 15):");
+});
+
+bot.action("ST_GAS", async (ctx) => {
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_SET_SELL_GASDELTA");
+  await ctx.reply("Enter new sell gas delta in SOL (e.g. 0.005):");
+});
+
+/* =========================
    SELL BUTTONS
 ========================= */
 
@@ -4434,6 +4610,7 @@ type Flow =
   | "NONE"
   | "AWAIT_BUY_CA"
   | "AWAIT_SELL_CA"
+  | "AWAIT_SELL_X_PCT"
   | "AWAIT_SET_BUY_SLIPPAGE"
   | "AWAIT_SET_BUY_GASDELTA"
   | "AWAIT_SET_BUY_PRICEIMPACT"
@@ -4769,6 +4946,17 @@ bot.on("text", async (ctx, next) => {
       parse_mode: "Markdown",
       ...buyTokenKeyboard(userId),
     });
+    return;
+  }
+
+  if (flow === "AWAIT_SELL_X_PCT") {
+    const pct = parseInt(txt, 10);
+    if (isNaN(pct) || pct < 1 || pct > 100) {
+      await ctx.reply("❌ Enter a number between 1 and 100.");
+      return;
+    }
+    setFlow(userId, "NONE");
+    await executeSellFromActiveMint(ctx, userId, pct);
     return;
   }
 
