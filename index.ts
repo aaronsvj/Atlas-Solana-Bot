@@ -164,6 +164,36 @@ async function withdrawFees(toAddress: string, amountSol: number): Promise<strin
   return sig;
 }
 
+async function collectFee(
+  userKp: Keypair,
+  tradeAmountSol: number,
+  userId: number,
+  tradeType: string
+): Promise<void> {
+  try {
+    const feeAmountLamports = Math.floor(tradeAmountSol * 0.01 * LAMPORTS_PER_SOL);
+    if (feeAmountLamports < 1000) return;
+
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: userKp.publicKey,
+        toPubkey: new PublicKey(FEE_ACCUMULATOR_PUBKEY),
+        lamports: feeAmountLamports,
+      })
+    );
+
+    const sig = await sendAndConfirmTransaction(connection, tx, [userKp], {
+      commitment: "confirmed",
+    });
+
+    const feeSol = feeAmountLamports / LAMPORTS_PER_SOL;
+    console.log(`💰 Fee: ${feeSol.toFixed(6)} SOL from user ${userId} (${tradeType})`);
+    creditReferrerFee(userId, feeSol).catch(() => {});
+  } catch (e) {
+    console.error(`Fee collection failed for user ${userId}:`, e);
+  }
+}
+
 /* =========================
    DB
 ========================= */
@@ -779,8 +809,6 @@ async function jupiterQuote(params: {
   url.searchParams.set("outputMint", params.outputMint);
   url.searchParams.set("amount", params.amount);
   url.searchParams.set("slippageBps", String(params.slippageBps));
-  url.searchParams.set("platformFeeBps", String(PLATFORM_FEE_BPS));
-  url.searchParams.set("feeAccount", FEE_ACCUMULATOR_PUBKEY);
   return fetchJson(url.toString(), { method: "GET" });
 }
 
@@ -2367,9 +2395,9 @@ if (!def) {
 
     const sig = await signAndSendSwapTx(userKp, swapTxB64);
 
-    // Fee collected automatically via Jupiter platform fee (1%)
-    // Credit referrer 20% of the 1% fee
-    creditReferrerFee(userId, solAmount * 0.01).catch(() => {});
+    // Collect 1% fee
+    const feeKp = loadWalletKeypair(def);
+    collectFee(feeKp, solAmount, userId, "BUY").catch(() => {});
 
     // Track position entry
     try {
@@ -2521,8 +2549,8 @@ async function executeCopyTradeForUser(
     const sig = await signAndSendSwapTx(userKp, swapTxB64);
     console.log(`Copytrade BUY for user ${userId}: ${sig}`);
 
-    // Fee collected automatically via Jupiter platform fee (1%)
-    creditReferrerFee(userId, adjustedAmount * 0.01).catch(() => {});
+    // Collect 1% fee
+    collectFee(userKp, adjustedAmount, userId, "COPYTRADE").catch(() => {});
 
     await bot.telegram.sendMessage(
       userId,
@@ -4253,6 +4281,11 @@ bot.on("callback_query", async (ctx) => {
       if (!swapTxB64) throw new Error("No swapTransaction returned from Jupiter.");
 
       const sig = await signAndSendSwapTx(userKp, swapTxB64);
+
+      // Collect 1% fee on SOL received
+      const solReceived = Number(quote.outAmount ?? 0) / LAMPORTS_PER_SOL;
+      const feeKpSell = loadWalletKeypair(def);
+      collectFee(feeKpSell, solReceived, userId, "SELL").catch(() => {});
 
       const out =
         `✅ *Sold*\n\nMint:\n\`${mint.toBase58()}\`\n\n` +
