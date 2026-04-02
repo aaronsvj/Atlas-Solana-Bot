@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["fontconfig", "liberation_ttf"]
+nixPkgs = ["fontconfig", "liberation_ttf", "dejavu_fonts"]
 
 [phases.build]
-cmds = ["fc-cache -fv", "npm install"]
+cmds = ["mkdir -p /etc/fonts", "fc-cache -fv || true", "npm install"]

@@ -2001,6 +2001,7 @@ function escapeXml(s: string) {
 }
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
+  process.env.FONTCONFIG_PATH = "/run/current-system/sw/etc/fonts";
   const pnlSign = input.pnlPct >= 0 ? "+" : "";
   const pnlColor = input.pnlPct >= 0 ? "#1a8cff" : "#ff4444";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
