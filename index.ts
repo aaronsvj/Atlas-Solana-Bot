@@ -4481,9 +4481,16 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
       }
     }
   } catch (e: any) {
+    console.error("Sell error:", e);
+    const msg = e?.message ?? String(e);
+    const clean = msg.includes("0x1771") || msg.includes("insufficient funds")
+      ? "Insufficient SOL for transaction fees. Fund your wallet and try again."
+      : msg.includes("Simulation failed")
+      ? "Transaction simulation failed. Try again or increase slippage."
+      : msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
     await ctx.telegram.editMessageText(
       loading.chat.id, loading.message_id, undefined,
-      `❌ Sell failed:\n${e?.message ?? String(e)}`
+      `❌ Sell failed:\n${clean}`
     );
   }
 }
@@ -4779,11 +4786,17 @@ bot.on("callback_query", async (ctx) => {
       }
     } catch (e: any) {
       console.error("Sell error:", e);
+      const msg = e?.message ?? String(e);
+      const clean = msg.includes("0x1771") || msg.includes("insufficient funds")
+        ? "Insufficient SOL for transaction fees. Fund your wallet and try again."
+        : msg.includes("Simulation failed")
+        ? "Transaction simulation failed. Try again or increase slippage."
+        : msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
       await ctx.telegram.editMessageText(
         loading.chat.id,
         loading.message_id,
         undefined,
-        `❌ Sell failed:\n${e?.message ?? String(e)}`
+        `❌ Sell failed:\n${clean}`
       );
     }
     return;
