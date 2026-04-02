@@ -1909,34 +1909,43 @@ function positionsKeyboard(userId: number) {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback("ℹ️ Help", "POS_HELP"),
-      Markup.button.callback("Return", "POS_RETURN"),
+      Markup.button.callback("↩️ Return", "POS_RETURN"),
     ],
     [Markup.button.callback("📈 Add Position", "POS_ADD")],
-    [Markup.button.callback("🔄 Refresh", "POS_REFRESH")],
+    [
+      Markup.button.callback("🔄 Refresh", "POS_REFRESH"),
+      Markup.button.callback("🔁 Reset P/L", "POS_RESET"),
+    ],
     [Markup.button.callback("⬇️ Select the wallet ⬇️", "NOOP")],
     walletButtons,
   ]);
 }
 bot.action("POS_RESET", async (ctx) => {
-
+  await ctx.answerCbQuery("Resetting P/L to current value...");
   const userId = ctx.from!.id;
   const u = getUser(userId);
+  const walletName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+  const walletRec = u.wallets.find(w => w.name === walletName);
 
-  const wallet =
-    selectedPositionWallet.get(userId) ||
-    getDefaultWallet(userId)?.name;
-
-  for (const p of u.positions || []) {
-    if (p.wallet === wallet) {
-      p.entry = 0;
-    }
+  for (const p of (u.positions || []) as any[]) {
+    if (p.wallet !== walletName) continue;
+    try {
+      const info = await fetchTokenInfo(p.mint).catch(() => null);
+      const holding = walletRec
+        ? await getTokenHolding(new PublicKey(walletRec.pubkey), new PublicKey(p.mint)).catch(() => null)
+        : null;
+      if (info && holding && holding.uiAmount > 0) {
+        // Reset entry to current SOL value
+        p.entry = holding.uiAmount * info.priceSOL;
+      } else {
+        p.entry = 0;
+      }
+    } catch { p.entry = 0; }
   }
 
   setUser(u);
-
-  await ctx.answerCbQuery("Positions reset");
+  await ctx.answerCbQuery("✅ P/L reset to current value");
   await showPositionsMenu(ctx, userId);
-
 });
 function limitOrdersMiniKeyboard(userId: number) {
   const u = getUser(userId);
