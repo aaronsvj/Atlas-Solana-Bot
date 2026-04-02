@@ -69,28 +69,14 @@ const WSOL_MINT = "So11111111111111111111111111111111111111112";
    TOKEN BLACKLIST
 ========================= */
 const HARDCODED_BLACKLIST = new Set<string>([]);
-
 function getBlacklist(): Set<string> {
-  try {
-    const db = loadDB() as any;
-    const list: string[] = db.tokenBlacklist ?? [];
-    return new Set([...HARDCODED_BLACKLIST, ...list]);
-  } catch { return HARDCODED_BLACKLIST; }
+  try { const db = loadDB() as any; return new Set([...HARDCODED_BLACKLIST, ...(db.tokenBlacklist ?? [])]); } catch { return HARDCODED_BLACKLIST; }
 }
 function addToBlacklist(mint: string): void {
-  try {
-    const db = loadDB() as any;
-    if (!db.tokenBlacklist) db.tokenBlacklist = [];
-    if (!db.tokenBlacklist.includes(mint)) { db.tokenBlacklist.push(mint); saveDB(db); }
-  } catch {}
+  try { const db = loadDB() as any; if (!db.tokenBlacklist) db.tokenBlacklist = []; if (!db.tokenBlacklist.includes(mint)) { db.tokenBlacklist.push(mint); saveDB(db); } } catch {}
 }
 function removeFromBlacklist(mint: string): void {
-  try {
-    const db = loadDB() as any;
-    if (!db.tokenBlacklist) return;
-    db.tokenBlacklist = db.tokenBlacklist.filter((m: string) => m !== mint);
-    saveDB(db);
-  } catch {}
+  try { const db = loadDB() as any; if (!db.tokenBlacklist) return; db.tokenBlacklist = db.tokenBlacklist.filter((m: string) => m !== mint); saveDB(db); } catch {}
 }
 function isBlacklisted(mint: string): boolean { return getBlacklist().has(mint); }
 
@@ -1336,10 +1322,10 @@ async function buildTrackTokenText(userId: number) {
   const pos = (u.positions ?? []).find(p => p.mint === mint && p.wallet === def.name);
   let pnlLine = "";
   if (pos && pos.entry > 0 && info) {
-    const currentValue = tokenBalance * info.price;
-    const pnlPct = ((currentValue - pos.entry) / pos.entry) * 100;
+    const currentValueSol = tokenBalance * info.priceSOL;
+    const pnlPct = ((currentValueSol - pos.entry) / pos.entry) * 100;
     const pnlSign = pnlPct >= 0 ? "+" : "";
-    pnlLine = `\n📊 PnL: *${pnlSign}${pnlPct.toFixed(2)}%* | Entry: ${fmtUsd(pos.entry)}`;
+    pnlLine = `\n📊 PnL: *${pnlSign}${pnlPct.toFixed(2)}%* | Entry: ${pos.entry.toFixed(4)} SOL`;
   }
 
   return (
@@ -1389,12 +1375,12 @@ async function buildPositionsText(userId: number) {
       } catch {}
 
       const currentPrice = info?.price ?? 0;
-      const currentValue = tokenBalance * currentPrice;
+      const currentValueSol = tokenBalance * (info?.priceSOL ?? 0);
       const entrySol = p.entry || p.entrySpentSol || 0;
 
       let pnlLine = "PnL: *N/A*";
-      if (entrySol > 0 && currentValue > 0) {
-        const pnlPct = ((currentValue - entrySol) / entrySol) * 100;
+      if (entrySol > 0 && currentValueSol > 0) {
+        const pnlPct = ((currentValueSol - entrySol) / entrySol) * 100;
         const sign = pnlPct >= 0 ? "+" : "";
         pnlLine = `PnL: *${sign}${pnlPct.toFixed(2)}%*`;
       }
@@ -1404,7 +1390,7 @@ async function buildPositionsText(userId: number) {
         `\`${p.mint}\`\n` +
         `Balance: *${tokenBalance > 0 ? tokenBalance.toLocaleString() : "0"}*\n` +
         `Price: *${info ? fmtPrice(info.price) : "Unknown"}*\n` +
-        `Worth: *${currentValue > 0 ? fmtUsd(currentValue) : "Unknown"}*\n` +
+        `Worth: *${currentValueSol > 0 ? currentValueSol.toFixed(4) + " SOL" : "Unknown"}*\n` +
         `Entry: *${entrySol > 0 ? entrySol.toFixed(4) + " SOL" : "Not set"}*\n` +
         `${pnlLine}\n\n`;
     }
@@ -2393,43 +2379,29 @@ async function executeBuyFromActiveMint(
     return;
   }
 
-  // Blacklist check
   if (isBlacklisted(mintStr)) {
-    await ctx.reply(`🚫 *Token Blocked*\n\nThis token is blacklisted and cannot be traded.\n\n\`${mintStr}\``, { parse_mode: "Markdown" });
+    await ctx.reply(`🚫 *Token Blocked*\n\nThis token is blacklisted.\n\n\`${mintStr}\``, { parse_mode: "Markdown" });
     return;
   }
 
   const u = getUser(userId);
 
-  // MULTI-WALLET MODE: execute across all Manual wallets simultaneously
+  // MULTI-WALLET MODE
   if (u.global.walletSelection === "MULTI") {
     const manualWallets = u.wallets.filter(w => w.isManual);
     if (manualWallets.length === 0) {
-      await ctx.reply("❌ No Manual wallets enabled. Go to Wallet and toggle Manual on for the wallets you want.");
+      await ctx.reply("❌ No Manual wallets enabled. Go to Wallet and toggle Manual on.");
       return;
     }
-
     const loading = await ctx.reply(`⏳ Buying ${solAmount} SOL on ${manualWallets.length} wallets...`);
-
     const results = await Promise.allSettled(manualWallets.map(async (wallet) => {
-      // Balance check per wallet
       const walletBalance = await connection.getBalance(new PublicKey(wallet.pubkey));
-      const walletSol = walletBalance / LAMPORTS_PER_SOL;
-      if (walletSol < solAmount + 0.01) {
-        throw new Error(`${wallet.name}: insufficient balance (${walletSol.toFixed(4)} SOL)`);
-      }
-
+      if (walletBalance / LAMPORTS_PER_SOL < solAmount + 0.01) throw new Error(`${wallet.name}: insufficient balance`);
       const userKp = loadWalletKeypair(wallet);
       const mint = new PublicKey(mintStr);
       const amountLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
-      const slippageSteps = [
-        slippageBpsFromPct(u.buy.slippagePct),
-        slippageBpsFromPct(Math.min(u.buy.slippagePct * 2, 50)),
-        slippageBpsFromPct(Math.min(u.buy.slippagePct * 4, 100)),
-      ];
-
-      let sig: string | null = null;
-      let lastErr: any = null;
+      const slippageSteps = [slippageBpsFromPct(u.buy.slippagePct), slippageBpsFromPct(Math.min(u.buy.slippagePct*2,50)), slippageBpsFromPct(Math.min(u.buy.slippagePct*4,100))];
+      let sig: string | null = null; let lastErr: any = null;
       for (const bps of slippageSteps) {
         try {
           const quote = await jupiterQuote({ inputMint: WSOL_MINT, outputMint: mint.toBase58(), amount: amountLamports.toString(), slippageBps: bps });
@@ -2442,8 +2414,6 @@ async function executeBuyFromActiveMint(
         } catch (e) { lastErr = e; }
       }
       if (!sig) throw new Error(`${wallet.name}: ${lastErr?.message ?? "failed"}`);
-
-      // Track position
       try {
         const fresh = getUser(userId);
         if (!fresh.positions) fresh.positions = [];
@@ -2453,24 +2423,13 @@ async function executeBuyFromActiveMint(
         invalidateBalanceCache(wallet.pubkey);
         setUser(fresh);
       } catch {}
-
       return { name: wallet.name, sig };
     }));
-
     const succeeded = results.filter(r => r.status === "fulfilled") as PromiseFulfilledResult<{name: string, sig: string}>[];
-    const failed = results.filter(r => r.status === "rejected") as PromiseRejectedResult[];
-
-    let summary = `✅ *Multi-wallet Buy Complete*
-
-`;
-    summary += `Spent: *${solAmount} SOL* per wallet\n\n`;
-    if (succeeded.length) {
-      summary += succeeded.map(r => `✅ *${r.value.name}*: \`${r.value.sig.slice(0,20)}...\``).join("\n") + "\n";
-    }
-    if (failed.length) {
-      summary += "\n" + failed.map(r => `❌ ${r.reason?.message ?? "failed"}`).join("\n");
-    }
-
+    const failed2 = results.filter(r => r.status === "rejected") as PromiseRejectedResult[];
+    let summary = `✅ *Multi-wallet Buy Complete*\n\nSpent: *${solAmount} SOL* per wallet\n\n`;
+    if (succeeded.length) summary += succeeded.map(r => `✅ *${r.value.name}*: \`${r.value.sig.slice(0,20)}...\``).join("\n") + "\n";
+    if (failed2.length) summary += "\n" + failed2.map(r => `❌ ${r.reason?.message ?? "failed"}`).join("\n");
     await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
     return;
   }
@@ -4414,10 +4373,10 @@ async function buildSellTokenText(userId: number) {
   const pos = (u.positions ?? []).find((p: any) => p.mint === mint && p.wallet === def.name);
   let pnlLine = "";
   if (pos && pos.entry > 0 && info && bal > 0) {
-    const currentValue = bal * info.price;
-    const pnlPct = ((currentValue - pos.entry) / pos.entry) * 100;
+    const currentValueSol = bal * info.priceSOL;
+    const pnlPct = ((currentValueSol - pos.entry) / pos.entry) * 100;
     const sign = pnlPct >= 0 ? "+" : "";
-    pnlLine = `\n📊 PnL: *${sign}${pnlPct.toFixed(2)}%* | Entry: ${fmtUsd(pos.entry)}`;
+    pnlLine = `\n📊 PnL: *${sign}${pnlPct.toFixed(2)}%* | Entry: ${pos.entry.toFixed(4)} SOL`;
   }
 
   return (
@@ -5553,39 +5512,38 @@ bot.command("admin", async (ctx) => {
     const message = args.slice(1).join(" ");
     if (!message) { await ctx.reply("Usage: /admin broadcast <message>"); return; }
     const db2 = loadDB();
-    const userIds = Object.keys(db2.users).map(Number);
-    await ctx.reply(`📡 Broadcasting to ${userIds.length} users...`);
+    const userIds2 = Object.keys(db2.users).map(Number);
+    await ctx.reply(`📡 Broadcasting to ${userIds2.length} users...`);
     let success = 0; let failed = 0;
-    for (const uid of userIds) {
-      try {
-        await bot.telegram.sendMessage(uid, `📢 *Message from Atlas*\n\n${message}`, { parse_mode: "Markdown" });
-        success++;
-      } catch { failed++; }
+    for (const uid of userIds2) {
+      try { await bot.telegram.sendMessage(uid, `📢 *Message from Atlas*
+
+${message}`, { parse_mode: "Markdown" }); success++; }
+      catch { failed++; }
       await new Promise(r => setTimeout(r, 50));
     }
-    await ctx.reply(`✅ Broadcast complete\n\nSent: *${success}*\nFailed: *${failed}*`, { parse_mode: "Markdown" });
+    await ctx.reply(`✅ Broadcast complete
+
+Sent: *${success}*
+Failed: *${failed}*`, { parse_mode: "Markdown" });
     return;
   }
 
   if (cmd === "blacklist") {
-    const subcmd = args[1];
-    const mintArg = args[2];
-    if (subcmd === "add" && mintArg) {
-      addToBlacklist(mintArg);
-      await ctx.reply(`✅ Added to blacklist:\n\`${mintArg}\``, { parse_mode: "Markdown" });
-    } else if (subcmd === "remove" && mintArg) {
-      removeFromBlacklist(mintArg);
-      await ctx.reply(`✅ Removed from blacklist:\n\`${mintArg}\``, { parse_mode: "Markdown" });
-    } else if (subcmd === "list") {
+    const subcmd = args[1]; const mintArg = args[2];
+    if (subcmd === "add" && mintArg) { addToBlacklist(mintArg); await ctx.reply(`✅ Blacklisted: \`${mintArg}\``, { parse_mode: "Markdown" }); }
+    else if (subcmd === "remove" && mintArg) { removeFromBlacklist(mintArg); await ctx.reply(`✅ Removed: \`${mintArg}\``, { parse_mode: "Markdown" }); }
+    else if (subcmd === "list") {
       const list = [...getBlacklist()];
-      await ctx.reply(list.length ? `🚫 *Blacklisted tokens:*\n\n${list.map((m) => `\`${m}\``).join("\n")}` : "🚫 Blacklist is empty.", { parse_mode: "Markdown" });
+      const listText = list.length ? "🚫 *Blacklist:*\n\n" + list.map(m => "`" + m + "`").join("\n") : "🚫 Blacklist is empty.";
+      await ctx.reply(listText, { parse_mode: "Markdown" });
     } else {
-      await ctx.reply("Usage:\n/admin blacklist add <mint>\n/admin blacklist remove <mint>\n/admin blacklist list");
+      await ctx.reply("/admin blacklist add <mint>\n/admin blacklist remove <mint>\n/admin blacklist list");
     }
     return;
   }
 
-  await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats\n/admin broadcast <message> — message all users\n/admin blacklist add/remove/list — manage token blacklist`, { parse_mode: "Markdown" });
+  await ctx.reply("🔧 *Admin Commands*\n\n/admin balance — fee wallet balance\n/admin withdraw <addr> <amt> — withdraw\n/admin stats — bot stats\n/admin broadcast <msg> — message all users\n/admin blacklist add/remove/list — token blacklist", { parse_mode: "Markdown" });
 });
 
 bot.command("refstats", async (ctx) => {
