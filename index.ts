@@ -3123,6 +3123,37 @@ bot.action("W_REARRANGE", async (ctx) => {
 
 bot.action("W_DEFAULT_INFO", async (ctx) => {
   await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const u = getUser(userId);
+
+  if (u.wallets.length === 0) {
+    await ctx.answerCbQuery("No wallets to set as default.", { show_alert: true });
+    return;
+  }
+
+  const rows = u.wallets.map((w) =>
+    [Markup.button.callback(
+      `${w.isDefault ? "✅" : "⬜"} ${w.name} — ${shortAddr(w.pubkey, 6, 4)}`,
+      `W_SET_DEFAULT_${w.id}`
+    )]
+  );
+  rows.push([Markup.button.callback("↩️ Cancel", "W_DEFAULT_CANCEL")]);
+
+  try {
+    await ctx.editMessageText(
+      `🏦 *Set Default Wallet*\n\nChoose which wallet to use for all automated trades, copytrade, and referral payouts:`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard(rows) }
+    );
+  } catch {
+    await ctx.reply(
+      `🏦 *Set Default Wallet*\n\nChoose which wallet to make default:`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard(rows) }
+    );
+  }
+});
+
+bot.action("W_DEFAULT_CANCEL", async (ctx) => {
+  await ctx.answerCbQuery();
   await showWalletMenu(ctx, ctx.from!.id);
 });
 
@@ -4429,6 +4460,23 @@ function sellPercentButtons(mint: string) {
   ];
   return Markup.inlineKeyboard(rows);
 }
+
+bot.on("callback_query", async (ctx) => {
+  const _wsd = (ctx.callbackQuery as any)?.data as string | undefined;
+  if (_wsd?.startsWith("W_SET_DEFAULT_")) {
+    await ctx.answerCbQuery();
+    const userId = ctx.from!.id;
+    const walletId = _wsd.replace("W_SET_DEFAULT_", "");
+    const u = getUser(userId);
+    const target = u.wallets.find((w) => w.id === walletId);
+    if (!target) { await ctx.answerCbQuery("Wallet not found.", { show_alert: true }); return; }
+    u.wallets = u.wallets.map((w) => ({ ...w, isDefault: w.id === walletId }));
+    setUser(u);
+    await ctx.answerCbQuery(`✅ ${target.name} is now your default wallet.`, { show_alert: true });
+    await showWalletMenu(ctx, userId);
+    return;
+  }
+});
 
 bot.on("callback_query", async (ctx) => {
   const data = (ctx.callbackQuery as any)?.data as string | undefined;
