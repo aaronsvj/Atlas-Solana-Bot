@@ -2001,7 +2001,6 @@ function escapeXml(s: string) {
 }
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
-  process.env.FONTCONFIG_PATH = "/run/current-system/sw/etc/fonts";
   const pnlSign = input.pnlPct >= 0 ? "+" : "";
   const pnlColor = input.pnlPct >= 0 ? "#1a8cff" : "#ff4444";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
@@ -2011,21 +2010,21 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     <ellipse cx="820" cy="80" rx="220" ry="160" fill="#ffffff" opacity="0.04"/>
     <ellipse cx="750" cy="420" rx="180" ry="120" fill="#ffffff" opacity="0.03"/>
     <rect x="0" y="0" width="5" height="500" fill="${pnlColor}"/>
-    <text x="48" y="68" font-family="Liberation Sans" font-size="13" fill="${pnlColor}" font-weight="700" letter-spacing="4">ATLAS | SOLANA</text>
-    <text x="48" y="112" font-family="Liberation Sans" font-size="36" fill="#ffffff" font-weight="700">${escapeXml(input.mintShort)}</text>
-    <text x="48" y="144" font-family="Liberation Sans" font-size="14" fill="#4a5568">Held for ${escapeXml(input.heldFor)}</text>
+    <text x="48" y="68" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="13" fill="${pnlColor}" font-weight="700" letter-spacing="4">ATLAS | SOLANA</text>
+    <text x="48" y="112" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="36" fill="#ffffff" font-weight="700">${escapeXml(input.mintShort)}</text>
+    <text x="48" y="144" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="14" fill="#4a5568">Held for ${escapeXml(input.heldFor)}</text>
     <rect x="48" y="162" width="80" height="2" fill="${pnlColor}" opacity="0.6"/>
-    <text x="44" y="298" font-family="Liberation Sans" font-size="152" fill="${pnlColor}" font-weight="900">${escapeXml(pnlPctText)}</text>
+    <text x="44" y="298" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="152" fill="${pnlColor}" font-weight="900">${escapeXml(pnlPctText)}</text>
     <rect x="48" y="322" width="600" height="1" fill="#ffffff" opacity="0.08"/>
-    <text x="48" y="358" font-family="Liberation Sans" font-size="11" fill="#4a5568" letter-spacing="2.5">INVESTED</text>
-    <text x="48" y="390" font-family="Liberation Sans" font-size="27" fill="#ffffff" font-weight="700">${input.costSol.toFixed(4)} SOL</text>
-    <text x="270" y="358" font-family="Liberation Sans" font-size="11" fill="#4a5568" letter-spacing="2.5">PAYOUT</text>
-    <text x="270" y="390" font-family="Liberation Sans" font-size="27" fill="${pnlColor}" font-weight="700">${input.valueSol.toFixed(4)} SOL</text>
-    <text x="492" y="358" font-family="Liberation Sans" font-size="11" fill="#4a5568" letter-spacing="2.5">PNL</text>
-    <text x="492" y="390" font-family="Liberation Sans" font-size="27" fill="${pnlColor}" font-weight="700">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
+    <text x="48" y="358" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="11" fill="#4a5568" letter-spacing="2.5">INVESTED</text>
+    <text x="48" y="390" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="27" fill="#ffffff" font-weight="700">${input.costSol.toFixed(4)} SOL</text>
+    <text x="270" y="358" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="11" fill="#4a5568" letter-spacing="2.5">PAYOUT</text>
+    <text x="270" y="390" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="27" fill="${pnlColor}" font-weight="700">${input.valueSol.toFixed(4)} SOL</text>
+    <text x="492" y="358" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="11" fill="#4a5568" letter-spacing="2.5">PNL</text>
+    <text x="492" y="390" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="27" fill="${pnlColor}" font-weight="700">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
     <rect x="0" y="448" width="900" height="52" fill="#0d1420"/>
-    <text x="48" y="480" font-family="Liberation Sans" font-size="14" fill="#ffffff" opacity="0.5">@${escapeXml(input.username)}</text>
-    <text x="852" y="480" font-family="Liberation Sans" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="600">@AtlasSolanaTrading</text>
+    <text x="48" y="480" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="14" fill="#ffffff" opacity="0.5">@${escapeXml(input.username)}</text>
+    <text x="852" y="480" font-family="Liberation Sans,DejaVu Sans,sans-serif" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="600">@AtlasSolanaTrading</text>
   </svg>`.trim();
 
   return await sharp(Buffer.from(svg)).png().toBuffer();
@@ -4314,7 +4313,8 @@ function sellTokenKeyboard(userId: number) {
 async function buildSellTokenText(userId: number) {
   const mint = activeSellMint.get(userId);
   const u = getUser(userId);
-  const def = getDefaultWallet(userId);
+  const selectedName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+  const def = u.wallets.find(w => w.name === selectedName) ?? getDefaultWallet(userId);
 
   if (!mint || !def) {
     return `🔗 *SOL*\n\nNo active token selected.\nPaste a CA first.`;
@@ -4372,7 +4372,9 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
   const mintStr = activeSellMint.get(userId);
   if (!mintStr) { await ctx.reply("❌ No active sell token."); return; }
   const u = getUser(userId);
-  const def = getDefaultWallet(userId);
+  // Use selected wallet from sell screen, fall back to default
+  const selectedName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+  const def = u.wallets.find(w => w.name === selectedName) ?? getDefaultWallet(userId);
   if (!def) { await ctx.reply("No wallet found."); return; }
 
   const mint = new PublicKey(mintStr);
