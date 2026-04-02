@@ -5439,7 +5439,31 @@ bot.command("admin", async (ctx) => {
     return;
   }
 
-  await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats`, { parse_mode: "Markdown" });
+  if (cmd === "broadcast") {
+    const message = args.slice(1).join(" ");
+    if (!message) {
+      await ctx.reply("Usage: /admin broadcast <message>");
+      return;
+    }
+    const db = loadDB();
+    const userIds = Object.keys(db.users).map(Number);
+    await ctx.reply(`📡 Broadcasting to ${userIds.length} users...`);
+    let success = 0;
+    let failed = 0;
+    for (const uid of userIds) {
+      try {
+        await bot.telegram.sendMessage(uid, `📢 *Message from Atlas*\n\n${message}`, { parse_mode: "Markdown" });
+        success++;
+      } catch {
+        failed++;
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    await ctx.reply(`✅ Broadcast complete\n\nSent: *${success}*\nFailed: *${failed}*`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats\n/admin broadcast <message> — message all users`, { parse_mode: "Markdown" });
 });
 
 bot.command("refstats", async (ctx) => {
