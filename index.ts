@@ -4476,12 +4476,17 @@ function sellPercentButtons(mint: string) {
   return Markup.inlineKeyboard(rows);
 }
 
+const pendingExport = new Map<number, string>();
+
+// ── single catch-all bot.on("callback_query") ──
 bot.on("callback_query", async (ctx) => {
-  const _wsd = (ctx.callbackQuery as any)?.data as string | undefined;
-  if (_wsd?.startsWith("W_SET_DEFAULT_")) {
+  const data = (ctx.callbackQuery as any)?.data as string | undefined;
+  if (!data) return;
+
+  if (data.startsWith("W_SET_DEFAULT_")) {
     await ctx.answerCbQuery();
     const userId = ctx.from!.id;
-    const walletId = _wsd.replace("W_SET_DEFAULT_", "");
+    const walletId = data.replace("W_SET_DEFAULT_", "");
     const u = getUser(userId);
     const target = u.wallets.find((w) => w.id === walletId);
     if (!target) { await ctx.answerCbQuery("Wallet not found.", { show_alert: true }); return; }
@@ -4491,14 +4496,6 @@ bot.on("callback_query", async (ctx) => {
     await showWalletMenu(ctx, userId);
     return;
   }
-});
-
-const pendingExport = new Map<number, string>();
-
-// ── catch-all bot.on("callback_query") ──
-bot.on("callback_query", async (ctx) => {
-  const data = (ctx.callbackQuery as any)?.data as string | undefined;
-  if (!data) return;
 
   if (data === "WP_EXPORT_CONFIRM") {
     await ctx.answerCbQuery();
