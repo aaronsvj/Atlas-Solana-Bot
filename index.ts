@@ -1451,15 +1451,16 @@ function walletPopupKeyboard(walletId: string) {
   return Markup.inlineKeyboard([
     [
       Markup.button.callback("ℹ️ Help", "WP_HELP"),
-      Markup.button.callback("Return", "WP_RETURN"),
-      Markup.button.callback("ℹ️ Help", "HELP_WALLET"),
+      Markup.button.callback("↩️ Return", "WP_RETURN"),
     ],
     [
       Markup.button.callback("⬆️ Send SOL", `WP_SEND_SOL_${walletId}`),
       Markup.button.callback("⬆️ Send Tokens", `WP_SEND_TOKEN_${walletId}`),
     ],
-    [Markup.button.callback("Rename", "WALLET_RENAME")],
-    
+    [
+      Markup.button.callback("✏️ Rename", "WALLET_RENAME"),
+      Markup.button.callback("🔑 Export Key", `WP_EXPORT_${walletId}`),
+    ],
   ]);
 }
 function bonkMainMenu() {
@@ -3239,6 +3240,67 @@ bot.action(/^W_OPEN_(.+)$/, async (ctx) => {
 bot.action("WP_RETURN", async (ctx) => {
   await ctx.answerCbQuery();
   await showWalletMenu(ctx, ctx.from!.id);
+});
+
+bot.action(/^WP_EXPORT_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const walletId = (ctx.match as any)[1];
+  const u = getUser(userId);
+  const wallet = u.wallets.find((w) => w.id === walletId);
+
+  if (!wallet) {
+    await ctx.reply("❌ Wallet not found.");
+    return;
+  }
+
+  await ctx.reply(
+    `⚠️ *Export Private Key*\n\n` +
+    `You are about to reveal the private key for *${wallet.name ?? "this wallet"}*.\n\n` +
+    `*Never share this with anyone.* Anyone with this key has full control of your funds.\n\n` +
+    `Tap confirm to reveal your key. The message will remind you to delete it after copying.`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("✅ Confirm — Show Key", `WP_EXPORT_CONFIRM_${walletId}`)],
+        [Markup.button.callback("❌ Cancel", "WP_EXPORT_CANCEL")],
+      ]),
+    }
+  );
+});
+
+bot.action("WP_EXPORT_CANCEL", async (ctx) => {
+  await ctx.answerCbQuery("Cancelled.");
+  try { await ctx.deleteMessage(); } catch {}
+});
+
+bot.action(/^WP_EXPORT_CONFIRM_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const walletId = (ctx.match as any)[1];
+  const u = getUser(userId);
+  const wallet = u.wallets.find((w) => w.id === walletId);
+
+  if (!wallet) {
+    await ctx.reply("❌ Wallet not found.");
+    return;
+  }
+
+  try {
+    const kp = loadWalletKeypair(wallet);
+    const base58Key = bs58.encode(kp.secretKey);
+
+    try { await ctx.deleteMessage(); } catch {}
+
+    await ctx.reply(
+      `🔑 *Private Key for ${wallet.name ?? "wallet"}*\n\n` +
+      `\`${base58Key}\`\n\n` +
+      `⚠️ *Delete this message after copying.* Never share this with anyone.`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (e: any) {
+    await ctx.reply(`❌ Could not export key: ${e?.message ?? String(e)}`);
+  }
 });
 
 bot.action("WP_HELP", async (ctx) => {
