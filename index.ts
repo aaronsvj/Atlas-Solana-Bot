@@ -1088,15 +1088,42 @@ async function buildWalletPopupText(walletId: string, userId: number, fetchLive 
 
 async function homeText(userId: number) {
   const def = getDefaultWallet(userId);
+  const u = getUser(userId);
   const walletLine = def
     ? `\nYour wallet: \`${def.pubkey}\``
     : "\nNo wallet yet. Tap Wallet.";
 
+  // Build live positions summary
+  let positionsLine = "";
+  const positions = (u.positions || []).filter((p: any) => def && p.wallet === def.name);
+  if (positions.length > 0 && def) {
+    const infos = await Promise.all(
+      positions.map((p: any) => fetchTokenInfo(p.mint).catch(() => null))
+    );
+    const lines: string[] = [];
+    for (let i = 0; i < positions.length; i++) {
+      const p = positions[i] as any;
+      const info = infos[i];
+      if (!info) continue;
+      const holding = await getTokenHolding(new PublicKey(def.pubkey), new PublicKey(p.mint)).catch(() => null);
+      const uiAmt = holding?.uiAmount ?? 0;
+      const currentValue = uiAmt * info.price;
+      const entrySol = p.entry || 0;
+      const pnlPct = entrySol > 0 ? ((currentValue - entrySol) / entrySol) * 100 : 0;
+      const sign = pnlPct >= 0 ? "+" : "";
+      const emoji = pnlPct >= 0 ? "🟢" : "🔴";
+      lines.push(`${emoji} *${info.symbol}* | ${sign}${pnlPct.toFixed(1)}% | MC $${fmtUsd(info.mc)}`);
+    }
+    if (lines.length > 0) {
+      positionsLine = `\n\n📊 *Positions*\n` + lines.join("\n");
+    }
+  }
+
   return (
-    `Welcome!\n` +
-    `Use the menu below.\n` +
-    `Quick buy/sell: paste token CA in Buy / Limit Orders.\n` +
-    `${walletLine}`
+    `🤖 *Atlas | Solana*\n` +
+    `Use the menu below to trade.\n` +
+    `${walletLine}` +
+    positionsLine
   );
 }
 
@@ -2153,7 +2180,8 @@ async function showHomeMenu(ctx: any, userId: number) {
       parse_mode: "Markdown",
       ...bonkMainMenu(),
     });
-  } catch {
+  } catch (e: any) {
+    if (e?.description?.includes("message is not modified")) return;
     await ctx.reply(text, {
       parse_mode: "Markdown",
       ...bonkMainMenu(),
@@ -2258,7 +2286,8 @@ async function showSellLimitsMenu(ctx: any, userId: number) {
       parse_mode: "Markdown",
       ...sellLimitsKeyboard(userId),
     });
-  } catch {
+  } catch (e: any) {
+    if (e?.description?.includes("message is not modified")) return;
     await ctx.reply(text, {
       parse_mode: "Markdown",
       ...sellLimitsKeyboard(userId),
@@ -2273,7 +2302,8 @@ async function showBuyTokenMenu(ctx: any, userId: number) {
       parse_mode: "Markdown",
       ...buyTokenKeyboard(userId),
     });
-  } catch {
+  } catch (e: any) {
+    if (e?.description?.includes("message is not modified")) return;
     await ctx.reply(text, {
       parse_mode: "Markdown",
       ...buyTokenKeyboard(userId),
@@ -2303,7 +2333,8 @@ async function showTrackTokenMenu(ctx: any, userId: number) {
       parse_mode: "Markdown",
       ...trackTokenKeyboard(userId),
     });
-  } catch {
+  } catch (e: any) {
+    if (e?.description?.includes("message is not modified")) return;
     await ctx.reply(text, {
       parse_mode: "Markdown",
       ...trackTokenKeyboard(userId),
@@ -2318,7 +2349,8 @@ async function showPositionsMenu(ctx: any, userId: number) {
       parse_mode: "Markdown",
       ...positionsKeyboard(userId),
     });
-  } catch {
+  } catch (e: any) {
+    if (e?.description?.includes("message is not modified")) return;
     await ctx.reply(text, {
       parse_mode: "Markdown",
       ...positionsKeyboard(userId),
