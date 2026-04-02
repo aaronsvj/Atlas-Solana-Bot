@@ -66,6 +66,49 @@ const bot = new Telegraf(token);
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
 
 /* =========================
+   TOKEN BLACKLIST
+========================= */
+
+// Persistent blacklist stored in DB, plus hardcoded known scams
+const HARDCODED_BLACKLIST = new Set<string>([
+  // Add known scam token mints here
+]);
+
+function getBlacklist(): Set<string> {
+  try {
+    const db = loadDB() as any;
+    const list: string[] = db.tokenBlacklist ?? [];
+    return new Set([...HARDCODED_BLACKLIST, ...list]);
+  } catch {
+    return HARDCODED_BLACKLIST;
+  }
+}
+
+function addToBlacklist(mint: string): void {
+  try {
+    const db = loadDB() as any;
+    if (!db.tokenBlacklist) db.tokenBlacklist = [];
+    if (!db.tokenBlacklist.includes(mint)) {
+      db.tokenBlacklist.push(mint);
+      saveDB(db);
+    }
+  } catch {}
+}
+
+function removeFromBlacklist(mint: string): void {
+  try {
+    const db = loadDB() as any;
+    if (!db.tokenBlacklist) return;
+    db.tokenBlacklist = db.tokenBlacklist.filter((m: string) => m !== mint);
+    saveDB(db);
+  } catch {}
+}
+
+function isBlacklisted(mint: string): boolean {
+  return getBlacklist().has(mint);
+}
+
+/* =========================
    FEE COLLECTION — Jupiter Platform Fee + Accumulator Wallet
 ========================= */
 
@@ -2361,6 +2404,12 @@ async function executeBuyFromActiveMint(
   const mintStr = activeBuyMint.get(userId);
   if (!mintStr) {
     await ctx.reply("❌ No active token selected. Tap Buy and paste the CA again.");
+    return;
+  }
+
+  // Blacklist check
+  if (isBlacklisted(mintStr)) {
+    await ctx.reply(`🚫 *Token Blocked*\n\nThis token is blacklisted and cannot be traded.\n\n\`${mintStr}\``, { parse_mode: "Markdown" });
     return;
   }
 
@@ -5441,29 +5490,41 @@ bot.command("admin", async (ctx) => {
 
   if (cmd === "broadcast") {
     const message = args.slice(1).join(" ");
-    if (!message) {
-      await ctx.reply("Usage: /admin broadcast <message>");
-      return;
-    }
+    if (!message) { await ctx.reply("Usage: /admin broadcast <message>"); return; }
     const db = loadDB();
     const userIds = Object.keys(db.users).map(Number);
     await ctx.reply(`📡 Broadcasting to ${userIds.length} users...`);
-    let success = 0;
-    let failed = 0;
+    let success = 0; let failed = 0;
     for (const uid of userIds) {
       try {
         await bot.telegram.sendMessage(uid, `📢 *Message from Atlas*\n\n${message}`, { parse_mode: "Markdown" });
         success++;
-      } catch {
-        failed++;
-      }
+      } catch { failed++; }
       await new Promise(r => setTimeout(r, 50));
     }
     await ctx.reply(`✅ Broadcast complete\n\nSent: *${success}*\nFailed: *${failed}*`, { parse_mode: "Markdown" });
     return;
   }
 
-  await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats\n/admin broadcast <message> — message all users`, { parse_mode: "Markdown" });
+  if (cmd === "blacklist") {
+    const subcmd = args[1];
+    const mint = args[2];
+    if (subcmd === "add" && mint) {
+      addToBlacklist(mint);
+      await ctx.reply(`✅ Added to blacklist:\n\`${mint}\``, { parse_mode: "Markdown" });
+    } else if (subcmd === "remove" && mint) {
+      removeFromBlacklist(mint);
+      await ctx.reply(`✅ Removed from blacklist:\n\`${mint}\``, { parse_mode: "Markdown" });
+    } else if (subcmd === "list") {
+      const list = [...getBlacklist()];
+      await ctx.reply(list.length ? `🚫 *Blacklisted tokens:*\n\n${list.map((m: string) => `\`${m}\``).join("\n")}` : "🚫 Blacklist is empty.", { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply("Usage:\n/admin blacklist add <mint>\n/admin blacklist remove <mint>\n/admin blacklist list");
+    }
+    return;
+  }
+
+  await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats\n/admin broadcast <message> — message all users\n/admin blacklist add/remove/list — manage token blacklist`, { parse_mode: "Markdown" });
 });
 
 bot.command("refstats", async (ctx) => {
