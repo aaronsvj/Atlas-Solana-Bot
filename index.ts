@@ -86,15 +86,59 @@ async function creditReferrerFee(userId: number, feeSol: number): Promise<void> 
   try {
     const u = getUser(userId);
     if (!u.referredBy) return;
+
     const referrer = getUserByReferralCode(u.referredBy);
     if (!referrer) return;
+
+    // Only credit within first 30 days
     const userCreatedAt = new Date(u.createdAt).getTime();
     if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
+
     const referrerShare = feeSol * 0.20;
+    const referrerShareLamports = Math.floor(referrerShare * LAMPORTS_PER_SOL);
+    if (referrerShareLamports < 1000) return; // skip dust
+
+    // Get fee accumulator keypair to send payout
+    const feeKp = getFeeAccumulatorKeypair();
+    if (!feeKp) return;
+
+    // Check fee accumulator has enough balance
+    const feeBalance = await getFeeAccumulatorBalance();
+    if (feeBalance < referrerShare + 0.001) return; // not enough to pay
+
+    // Send SOL to referrer's default wallet
+    const referrerWallet = referrer.wallets.find((w: any) => w.isDefault) ?? referrer.wallets[0];
+    if (!referrerWallet) return;
+
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: feeKp.publicKey,
+        toPubkey: new PublicKey(referrerWallet.pubkey),
+        lamports: referrerShareLamports,
+      })
+    );
+
+    const sig = await sendAndConfirmTransaction(connection, tx, [feeKp], {
+      commitment: "confirmed",
+    });
+
+    // Update referrer stats
     referrer.referrals.lifetimeSolEarned += referrerShare;
+    referrer.referrals.telegramReferrals = (referrer.referrals.telegramReferrals || 0);
     setUser(referrer);
-    console.log(`🎁 Referrer ${referrer.userId} credited ${referrerShare.toFixed(6)} SOL`);
-  } catch (e) { console.error("Referrer credit failed:", e); }
+
+    console.log(`🎁 Referral payout: ${referrerShare.toFixed(6)} SOL → user ${referrer.userId} | tx: ${sig}`);
+
+    // Notify referrer
+    bot.telegram.sendMessage(
+      referrer.userId,
+      `🎁 *Referral Reward!*\n\nOne of your referrals made a trade.\nYou earned: *${referrerShare.toFixed(6)} SOL*\n\nSent to your default wallet.\n\nKeep sharing your referral link to earn more! 🚀`,
+      { parse_mode: "Markdown" }
+    ).catch(() => {});
+
+  } catch (e) {
+    console.error("Referrer payout failed:", e);
+  }
 }
 
 async function getFeeAccumulatorBalance(): Promise<number> {
@@ -648,16 +692,37 @@ async function buildReferralText(userId: number) {
   const botUsername = await getBotUsername();
   const refLink = `https://t.me/${botUsername}?start=ref_${u.referralCode}`;
 
+  // Count how many users this person has referred
+  const db = loadDB();
+  let activeReferrals = 0;
+  let pendingEarnings = 0;
+  for (const raw of Object.values(db.users)) {
+    const ru = raw as any;
+    if (ru.referredBy === u.referralCode) {
+      activeReferrals++;
+      // Check if still in 30 day window
+      const createdAt = new Date(ru.createdAt).getTime();
+      if (Date.now() - createdAt < 30 * 24 * 60 * 60 * 1000) {
+        pendingEarnings++;
+      }
+    }
+  }
+
   return (
-    `Referrals:\n\n` +
-    `Your reflink: ${refLink}\n\n` +
-    `Telegram Referrals: ${u.referrals.telegramReferrals}\n` +
-    `Web Terminal Referrals: ${u.referrals.webReferrals}\n\n` +
-    `Lifetime SOL earned: ${u.referrals.lifetimeSolEarned.toFixed(2)} SOL ($0.00)\n` +
-    `Lifetime Bonk earned: ${u.referrals.lifetimeBonkEarned.toFixed(2)} BONK ($0.00)\n\n` +
-    `Rewards are updated at least every 24h.\n\n` +
-    `💸 Rewards are now auto-distributed in SOL.\n\n` +
-    `Refer your friends and earn 20% of their fees in the first month only.`
+    `🤝 *Referral Program*\n\n` +
+    `Your referral link:\n\`${refLink}\`\n\n` +
+    `📊 *Your Stats*\n` +
+    `Total referrals: *${activeReferrals}*\n` +
+    `Active (earning): *${pendingEarnings}* (within 30 days)\n` +
+    `Lifetime SOL earned: *${u.referrals.lifetimeSolEarned.toFixed(6)} SOL*\n\n` +
+    `💰 *How it works*\n` +
+    `• Share your link with traders\n` +
+    `• You earn *20% of all fees* they generate\n` +
+    `• Paid automatically to your default wallet\n` +
+    `• Valid for the first *30 days* per referral\n\n` +
+    `⚡ *For channel owners*\n` +
+    `Running a Solana signal channel? DM us at atlassolanabot@gmail.com for a custom partnership deal.\n\n` +
+    `🔗 Share your link and start earning!`
   );
 }
 
@@ -2284,6 +2349,10 @@ if (!def) {
 
     const sig = await signAndSendSwapTx(userKp, swapTxB64);
 
+    // Fee collected automatically via Jupiter platform fee (1%)
+    // Credit referrer 20% of the 1% fee
+    creditReferrerFee(userId, solAmount * 0.01).catch(() => {});
+
     // Track position entry
     try {
       const fresh = getUser(userId);
@@ -2433,6 +2502,9 @@ async function executeCopyTradeForUser(
 
     const sig = await signAndSendSwapTx(userKp, swapTxB64);
     console.log(`Copytrade BUY for user ${userId}: ${sig}`);
+
+    // Fee collected automatically via Jupiter platform fee (1%)
+    creditReferrerFee(userId, adjustedAmount * 0.01).catch(() => {});
 
     await bot.telegram.sendMessage(
       userId,
@@ -4910,6 +4982,37 @@ bot.command("admin", async (ctx) => {
   }
 
   await ctx.reply(`🔧 *Admin Commands*\n\n/admin balance — view fee wallet balance\n/admin withdraw <address> <amount> — withdraw fees\n/admin stats — view bot stats`, { parse_mode: "Markdown" });
+});
+
+bot.command("refstats", async (ctx) => {
+  const userId = ctx.from!.id;
+  const u = getUser(userId);
+  const botUsername = await getBotUsername();
+  const refLink = `https://t.me/${botUsername}?start=ref_${u.referralCode}`;
+
+  const db = loadDB();
+  let totalReferrals = 0;
+  let activeReferrals = 0;
+  for (const raw of Object.values(db.users)) {
+    const ru = raw as any;
+    if (ru.referredBy === u.referralCode) {
+      totalReferrals++;
+      const createdAt = new Date(ru.createdAt).getTime();
+      if (Date.now() - createdAt < 30 * 24 * 60 * 60 * 1000) {
+        activeReferrals++;
+      }
+    }
+  }
+
+  await ctx.reply(
+    `📊 *Your Referral Stats*\n\n` +
+    `Your link: \`${refLink}\`\n\n` +
+    `Total referrals: *${totalReferrals}*\n` +
+    `Active (30d window): *${activeReferrals}*\n` +
+    `Lifetime earned: *${u.referrals.lifetimeSolEarned.toFixed(6)} SOL*\n\n` +
+    `Payouts are automatic — sent to your default wallet after every trade your referrals make.`,
+    { parse_mode: "Markdown" }
+  );
 });
 
 // ── Startup ──────────────────────────────────────────────────────────────
