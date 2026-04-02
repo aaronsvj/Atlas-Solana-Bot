@@ -68,33 +68,22 @@ const WSOL_MINT = "So11111111111111111111111111111111111111112";
 /* =========================
    TOKEN BLACKLIST
 ========================= */
-
-// Persistent blacklist stored in DB, plus hardcoded known scams
-const HARDCODED_BLACKLIST = new Set<string>([
-  // Add known scam token mints here
-]);
+const HARDCODED_BLACKLIST = new Set<string>([]);
 
 function getBlacklist(): Set<string> {
   try {
     const db = loadDB() as any;
     const list: string[] = db.tokenBlacklist ?? [];
     return new Set([...HARDCODED_BLACKLIST, ...list]);
-  } catch {
-    return HARDCODED_BLACKLIST;
-  }
+  } catch { return HARDCODED_BLACKLIST; }
 }
-
 function addToBlacklist(mint: string): void {
   try {
     const db = loadDB() as any;
     if (!db.tokenBlacklist) db.tokenBlacklist = [];
-    if (!db.tokenBlacklist.includes(mint)) {
-      db.tokenBlacklist.push(mint);
-      saveDB(db);
-    }
+    if (!db.tokenBlacklist.includes(mint)) { db.tokenBlacklist.push(mint); saveDB(db); }
   } catch {}
 }
-
 function removeFromBlacklist(mint: string): void {
   try {
     const db = loadDB() as any;
@@ -103,10 +92,7 @@ function removeFromBlacklist(mint: string): void {
     saveDB(db);
   } catch {}
 }
-
-function isBlacklisted(mint: string): boolean {
-  return getBlacklist().has(mint);
-}
+function isBlacklisted(mint: string): boolean { return getBlacklist().has(mint); }
 
 /* =========================
    FEE COLLECTION — Jupiter Platform Fee + Accumulator Wallet
@@ -2415,6 +2401,81 @@ async function executeBuyFromActiveMint(
 
   const u = getUser(userId);
 
+  // MULTI-WALLET MODE: execute across all Manual wallets simultaneously
+  if (u.global.walletSelection === "MULTI") {
+    const manualWallets = u.wallets.filter(w => w.isManual);
+    if (manualWallets.length === 0) {
+      await ctx.reply("❌ No Manual wallets enabled. Go to Wallet and toggle Manual on for the wallets you want.");
+      return;
+    }
+
+    const loading = await ctx.reply(`⏳ Buying ${solAmount} SOL on ${manualWallets.length} wallets...`);
+
+    const results = await Promise.allSettled(manualWallets.map(async (wallet) => {
+      // Balance check per wallet
+      const walletBalance = await connection.getBalance(new PublicKey(wallet.pubkey));
+      const walletSol = walletBalance / LAMPORTS_PER_SOL;
+      if (walletSol < solAmount + 0.01) {
+        throw new Error(`${wallet.name}: insufficient balance (${walletSol.toFixed(4)} SOL)`);
+      }
+
+      const userKp = loadWalletKeypair(wallet);
+      const mint = new PublicKey(mintStr);
+      const amountLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
+      const slippageSteps = [
+        slippageBpsFromPct(u.buy.slippagePct),
+        slippageBpsFromPct(Math.min(u.buy.slippagePct * 2, 50)),
+        slippageBpsFromPct(Math.min(u.buy.slippagePct * 4, 100)),
+      ];
+
+      let sig: string | null = null;
+      let lastErr: any = null;
+      for (const bps of slippageSteps) {
+        try {
+          const quote = await jupiterQuote({ inputMint: WSOL_MINT, outputMint: mint.toBase58(), amount: amountLamports.toString(), slippageBps: bps });
+          const swap = await jupiterSwap({ userPublicKey: wallet.pubkey, quoteResponse: quote });
+          const swapTxB64 = (swap as any)?.swapTransaction;
+          if (!swapTxB64) throw new Error("No swapTransaction");
+          sig = await signAndSendSwapTx(userKp, swapTxB64);
+          collectFee(userKp, solAmount, userId, "BUY").catch(() => {});
+          break;
+        } catch (e) { lastErr = e; }
+      }
+      if (!sig) throw new Error(`${wallet.name}: ${lastErr?.message ?? "failed"}`);
+
+      // Track position
+      try {
+        const fresh = getUser(userId);
+        if (!fresh.positions) fresh.positions = [];
+        const existing = fresh.positions.find((p: any) => p.mint === mintStr && p.wallet === wallet.name);
+        if (existing) { (existing as any).entry = ((existing as any).entry ?? 0) + solAmount; }
+        else { fresh.positions.push({ wallet: wallet.name, mint: mintStr, entry: solAmount, amount: 0, createdAt: Date.now() } as any); }
+        invalidateBalanceCache(wallet.pubkey);
+        setUser(fresh);
+      } catch {}
+
+      return { name: wallet.name, sig };
+    }));
+
+    const succeeded = results.filter(r => r.status === "fulfilled") as PromiseFulfilledResult<{name: string, sig: string}>[];
+    const failed = results.filter(r => r.status === "rejected") as PromiseRejectedResult[];
+
+    let summary = `✅ *Multi-wallet Buy Complete*
+
+`;
+    summary += `Spent: *${solAmount} SOL* per wallet\n\n`;
+    if (succeeded.length) {
+      summary += succeeded.map(r => `✅ *${r.value.name}*: \`${r.value.sig.slice(0,20)}...\``).join("\n") + "\n";
+    }
+    if (failed.length) {
+      summary += "\n" + failed.map(r => `❌ ${r.reason?.message ?? "failed"}`).join("\n");
+    }
+
+    await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
+    return;
+  }
+
+  // SINGLE WALLET MODE
 const selected =
   selectedPositionWallet.get(userId) ||
   getDefaultWallet(userId)?.name;
@@ -5491,8 +5552,8 @@ bot.command("admin", async (ctx) => {
   if (cmd === "broadcast") {
     const message = args.slice(1).join(" ");
     if (!message) { await ctx.reply("Usage: /admin broadcast <message>"); return; }
-    const db = loadDB();
-    const userIds = Object.keys(db.users).map(Number);
+    const db2 = loadDB();
+    const userIds = Object.keys(db2.users).map(Number);
     await ctx.reply(`📡 Broadcasting to ${userIds.length} users...`);
     let success = 0; let failed = 0;
     for (const uid of userIds) {
@@ -5508,16 +5569,16 @@ bot.command("admin", async (ctx) => {
 
   if (cmd === "blacklist") {
     const subcmd = args[1];
-    const mint = args[2];
-    if (subcmd === "add" && mint) {
-      addToBlacklist(mint);
-      await ctx.reply(`✅ Added to blacklist:\n\`${mint}\``, { parse_mode: "Markdown" });
-    } else if (subcmd === "remove" && mint) {
-      removeFromBlacklist(mint);
-      await ctx.reply(`✅ Removed from blacklist:\n\`${mint}\``, { parse_mode: "Markdown" });
+    const mintArg = args[2];
+    if (subcmd === "add" && mintArg) {
+      addToBlacklist(mintArg);
+      await ctx.reply(`✅ Added to blacklist:\n\`${mintArg}\``, { parse_mode: "Markdown" });
+    } else if (subcmd === "remove" && mintArg) {
+      removeFromBlacklist(mintArg);
+      await ctx.reply(`✅ Removed from blacklist:\n\`${mintArg}\``, { parse_mode: "Markdown" });
     } else if (subcmd === "list") {
       const list = [...getBlacklist()];
-      await ctx.reply(list.length ? `🚫 *Blacklisted tokens:*\n\n${list.map((m: string) => `\`${m}\``).join("\n")}` : "🚫 Blacklist is empty.", { parse_mode: "Markdown" });
+      await ctx.reply(list.length ? `🚫 *Blacklisted tokens:*\n\n${list.map((m) => `\`${m}\``).join("\n")}` : "🚫 Blacklist is empty.", { parse_mode: "Markdown" });
     } else {
       await ctx.reply("Usage:\n/admin blacklist add <mint>\n/admin blacklist remove <mint>\n/admin blacklist list");
     }
