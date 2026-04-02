@@ -1718,9 +1718,9 @@ function walletsKeyboard(userId: number) {
       const deleteLabel = w.isDefault ? "➖" : "❌";
 
       rows.push([
-        Markup.button.callback(`⚙️ ${w.name}`, `W_OPEN_${w.id}`),
-        Markup.button.callback(manualLabel, `W_TOGMAN_${w.id}`),
-        Markup.button.callback(deleteLabel, `W_DEL_${w.id}`),
+        Markup.button.callback(`⚙️ ${w.name}`, `W_OPEN_${w.id ?? w.name}`),
+        Markup.button.callback(manualLabel, `W_TOGMAN_${w.id ?? w.name}`),
+        Markup.button.callback(deleteLabel, `W_DEL_${w.id ?? w.name}`),
       ]);
     }
   }
@@ -4501,7 +4501,7 @@ bot.action(/^WP_EXPORT_(.+)$/, async (ctx) => {
   const walletId = (ctx.match as any)[1];
   if (walletId === "CONFIRM" || walletId === "CANCEL") return;
   const u = getUser(userId);
-  const wallet = u.wallets.find((w) => w.id === walletId);
+  const wallet = u.wallets.find((w) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
   if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
   pendingExport.set(userId, walletId);
   await ctx.reply(
@@ -4529,7 +4529,7 @@ bot.action("WP_EXPORT_CONFIRM", async (ctx) => {
   if (!walletId) { await ctx.reply("❌ Session expired. Try again."); return; }
   pendingExport.delete(userId);
   const u = getUser(userId);
-  const wallet = u.wallets.find((w) => w.id === walletId);
+  const wallet = u.wallets.find((w) => w.id === walletId || w.name === walletId || w.pubkey === walletId);
   if (!wallet) { await ctx.reply("❌ Wallet not found."); return; }
   try {
     const kp = loadWalletKeypair(wallet);
