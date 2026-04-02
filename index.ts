@@ -2386,104 +2386,112 @@ if (!def) {
 
   const loading = await ctx.reply(`⏳ Buying ${solAmount} SOL worth...`);
 
-  try {
-    const userKp = loadWalletKeypair(def);
+  // Slippage auto-retry: try up to 3 times, doubling slippage each attempt
+  const slippageSteps = [
+    slippageBpsFromPct(u.buy.slippagePct),
+    slippageBpsFromPct(Math.min(u.buy.slippagePct * 2, 50)),
+    slippageBpsFromPct(Math.min(u.buy.slippagePct * 4, 100)),
+  ];
 
-    const amountLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
-    if (amountLamports <= 0n) throw new Error("Amount too small.");
+  let lastError: any = null;
+  let sig: string | null = null;
+  let usedSlippageBps = slippageSteps[0];
 
-    // Check wallet has enough SOL (buy amount + 0.01 buffer for fees/rent)
-    const walletBalance = await connection.getBalance(new PublicKey(def.pubkey));
-    const walletSol = walletBalance / LAMPORTS_PER_SOL;
-    const required = solAmount + 0.01;
-    if (walletSol < required) {
-      throw new Error(
-        `Insufficient balance. You have *${walletSol.toFixed(4)} SOL* but need ~*${required.toFixed(4)} SOL* (${solAmount} + ~0.01 for fees).\n\nFund your wallet first.`
-      );
-    }
-
-    const quote = await jupiterQuote({
-      inputMint: WSOL_MINT,
-      outputMint: mint.toBase58(),
-      amount: amountLamports.toString(),
-      slippageBps: slippageBpsFromPct(u.buy.slippagePct),
-    });
-
-    const swap = await jupiterSwap({
-      userPublicKey: def.pubkey,
-      quoteResponse: quote,
-    });
-
-    const swapTxB64 = (swap as any)?.swapTransaction;
-    if (!swapTxB64) throw new Error("No swapTransaction returned from Jupiter.");
-
-    const sig = await signAndSendSwapTx(userKp, swapTxB64);
-
-    // Collect 1% fee
-    const feeKp = loadWalletKeypair(def);
-    collectFee(feeKp, solAmount, userId, "BUY").catch(() => {});
-
-    // Track position entry
-    try {
-      const fresh = getUser(userId);
-      if (!fresh.positions) fresh.positions = [];
-      const walletName = def.name ?? "wallet1";
-      const existingPos = fresh.positions.find((p: any) => p.mint === mint.toBase58() && p.wallet === walletName);
-      if (existingPos) {
-        (existingPos as any).entry = ((existingPos as any).entry ?? 0) + solAmount;
-      } else {
-        fresh.positions.push({ wallet: walletName, mint: mint.toBase58(), entry: solAmount, amount: 0, createdAt: Date.now() } as any);
-      }
-      invalidateBalanceCache(def.pubkey);
-      setUser(fresh);
-    } catch {}
-
-    // Fetch token info for confirmation message
-    const info = await fetchTokenInfo(mint.toBase58()).catch(() => null);
-    const priceStr = info ? fmtPrice(info.price) : "Unknown";
-    const mcStr    = info ? fmtUsd(info.mc)      : "Unknown";
-
-    // Fetch live PnL for confirmation message
-    const fresh2 = getUser(userId);
-    const pos2 = (fresh2.positions ?? []).find((p: any) => p.mint === mint.toBase58() && p.wallet === (def.name ?? "wallet1"));
-    let pnlLine = "";
-    if (pos2 && pos2.entry > 0 && info) {
-      const holding2 = await getTokenHolding(new PublicKey(def.pubkey), mint).catch(() => null);
-      if (holding2 && holding2.uiAmount > 0) {
-        const currentValue = holding2.uiAmount * info.price;
-        const pnlPct = ((currentValue - pos2.entry) / pos2.entry) * 100;
-        const sign = pnlPct >= 0 ? "+" : "";
-        pnlLine = `\n📊 PnL: *${sign}${pnlPct.toFixed(2)}%* | Current value: *${fmtUsd(currentValue)}*`;
-      }
-    }
-
-    const out =
-      `✅ *Bought*\n\n` +
-      `${info ? `*${info.name} (${info.symbol})*\n` : ""}` +
-      `\`${mint.toBase58()}\`\n\n` +
-      `Spent: *${solAmount} SOL*\n` +
-      `Price: *${priceStr}*\n` +
-      `MC: *${mcStr}*\n` +
-      `Slippage: *${u.buy.slippagePct.toFixed(2)}%*` +
-      pnlLine + `\n\n` +
-      `🧾 Tx: \`${sig}\``;
-
+  // Balance check
+  const walletBalance = await connection.getBalance(new PublicKey(def.pubkey));
+  const walletSol = walletBalance / LAMPORTS_PER_SOL;
+  if (walletSol < solAmount + 0.01) {
     await ctx.telegram.editMessageText(
-      loading.chat.id,
-      loading.message_id,
-      undefined,
-      out,
+      loading.chat.id, loading.message_id, undefined,
+      `❌ Insufficient balance. You have *${walletSol.toFixed(4)} SOL* but need ~*${(solAmount + 0.01).toFixed(4)} SOL*.\n\nFund your wallet first.`,
       { parse_mode: "Markdown" }
     );
-  } catch (e: any) {
-    console.error("Buy error:", e);
-    await ctx.telegram.editMessageText(
-      loading.chat.id,
-      loading.message_id,
-      undefined,
-      `❌ Buy failed:\n${e?.message ?? String(e)}`
-    );
+    return;
   }
+
+  const userKp = loadWalletKeypair(def);
+  const amountLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
+  if (amountLamports <= 0n) {
+    await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, `❌ Amount too small.`);
+    return;
+  }
+
+  for (let attempt = 0; attempt < slippageSteps.length; attempt++) {
+    usedSlippageBps = slippageSteps[attempt];
+    const slippagePct = (usedSlippageBps / 100).toFixed(1);
+
+    if (attempt > 0) {
+      await ctx.telegram.editMessageText(
+        loading.chat.id, loading.message_id, undefined,
+        `⏳ Attempt ${attempt + 1}/3 with slippage *${slippagePct}%*...`,
+        { parse_mode: "Markdown" }
+      ).catch(() => {});
+    }
+
+    try {
+      const quote = await jupiterQuote({
+        inputMint: WSOL_MINT,
+        outputMint: mint.toBase58(),
+        amount: amountLamports.toString(),
+        slippageBps: usedSlippageBps,
+      });
+
+      const swap = await jupiterSwap({ userPublicKey: def.pubkey, quoteResponse: quote });
+      const swapTxB64 = (swap as any)?.swapTransaction;
+      if (!swapTxB64) throw new Error("No swapTransaction returned from Jupiter.");
+
+      sig = await signAndSendSwapTx(userKp, swapTxB64);
+      lastError = null;
+      break; // success
+    } catch (e: any) {
+      lastError = e;
+      console.error(`Buy attempt ${attempt + 1} failed (slippage ${slippagePct}%):`, e?.message);
+    }
+  }
+
+  if (!sig) {
+    await ctx.telegram.editMessageText(
+      loading.chat.id, loading.message_id, undefined,
+      `❌ Buy failed after 3 attempts:\n${lastError?.message ?? String(lastError)}`
+    );
+    return;
+  }
+
+  // Collect 1% fee
+  collectFee(userKp, solAmount, userId, "BUY").catch(() => {});
+
+  // Track position entry
+  try {
+    const fresh = getUser(userId);
+    if (!fresh.positions) fresh.positions = [];
+    const walletName = def.name ?? "wallet1";
+    const existingPos = fresh.positions.find((p: any) => p.mint === mint.toBase58() && p.wallet === walletName);
+    if (existingPos) {
+      (existingPos as any).entry = ((existingPos as any).entry ?? 0) + solAmount;
+    } else {
+      fresh.positions.push({ wallet: walletName, mint: mint.toBase58(), entry: solAmount, amount: 0, createdAt: Date.now() } as any);
+    }
+    invalidateBalanceCache(def.pubkey);
+    setUser(fresh);
+  } catch {}
+
+  const info = await fetchTokenInfo(mint.toBase58()).catch(() => null);
+  const priceStr = info ? fmtPrice(info.price) : "Unknown";
+  const mcStr    = info ? fmtUsd(info.mc)      : "Unknown";
+  const usedSlippagePct = (usedSlippageBps / 100).toFixed(2);
+
+  await ctx.telegram.editMessageText(
+    loading.chat.id, loading.message_id, undefined,
+    `✅ *Bought*\n\n` +
+    `${info ? `*${info.name} (${info.symbol})*\n` : ""}` +
+    `\`${mint.toBase58()}\`\n\n` +
+    `Spent: *${solAmount} SOL*\n` +
+    `Price: *${priceStr}*\n` +
+    `MC: *${mcStr}*\n` +
+    `Slippage used: *${usedSlippagePct}%*\n\n` +
+    `🧾 Tx: \`${sig}\``,
+    { parse_mode: "Markdown" }
+  );
 }
 
 /* =========================
