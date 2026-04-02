@@ -4475,7 +4475,10 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
           { source: png },
           { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
         );
-      } catch {}
+      } catch (pnlErr: any) {
+        console.error("PnL card failed:", pnlErr);
+        await ctx.reply(`⚠️ PnL card failed: ${pnlErr?.message ?? String(pnlErr)}`).catch(() => {});
+      }
     }
   } catch (e: any) {
     await ctx.telegram.editMessageText(
@@ -4769,8 +4772,9 @@ bot.on("callback_query", async (ctx) => {
             { source: png },
             { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
           );
-        } catch (pnlErr) {
+        } catch (pnlErr: any) {
           console.error("PnL card generation failed:", pnlErr);
+          await ctx.reply(`⚠️ PnL card failed: ${pnlErr?.message ?? String(pnlErr)}`).catch(() => {});
         }
       }
     } catch (e: any) {
