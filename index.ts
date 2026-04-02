@@ -2002,77 +2002,29 @@ function escapeXml(s: string) {
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const pnlSign = input.pnlPct >= 0 ? "+" : "";
-  const pnlColor = input.pnlPct >= 0 ? "#00E676" : "#FF5252";
-  const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(0)}%`;
-  const bgColor = input.pnlPct >= 0 ? "#0B1020" : "#1A0B0B";
+  const pnlColor = input.pnlPct >= 0 ? "#1a8cff" : "#ff4444";
+  const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
 
-  const svg = `
-  <svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="${bgColor}"/>
-        <stop offset="60%" stop-color="#1A0F2E"/>
-        <stop offset="100%" stop-color="#0A2A2A"/>
-      </linearGradient>
-      <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.08"/>
-        <stop offset="100%" stop-color="#ffffff" stop-opacity="0.03"/>
-      </linearGradient>
-      <filter id="glow">
-        <feGaussianBlur stdDeviation="8" result="blur"/>
-        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-      </filter>
-      <filter id="shadow">
-        <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#000000" flood-opacity="0.5"/>
-      </filter>
-    </defs>
-
-    <!-- Background -->
-    <rect width="1200" height="630" fill="url(#bg)"/>
-
-    <!-- Glow orbs -->
-    <circle cx="100" cy="150" r="200" fill="${pnlColor}" opacity="0.06"/>
-    <circle cx="1100" cy="480" r="180" fill="#6E2BFF" opacity="0.08"/>
-
-    <!-- Top bar -->
-    <rect x="0" y="0" width="1200" height="6" fill="${pnlColor}" opacity="0.8"/>
-
-    <!-- Bot branding -->
-    <text x="60" y="60" font-family="Arial" font-size="22" fill="${pnlColor}" font-weight="700" opacity="0.9">⚡ ATLAS | SOLANA</text>
-    <text x="1140" y="60" font-family="Arial" font-size="18" fill="#ffffff" opacity="0.4" text-anchor="end">t.me/SolPilotBot</text>
-
-    <!-- Token name -->
-    <text x="60" y="130" font-family="Arial" font-size="38" fill="#ffffff" font-weight="700">${escapeXml(input.mintShort)}</text>
-
-    <!-- PnL percentage - BIG -->
-    <text x="60" y="280" font-family="Arial" font-size="160" fill="${pnlColor}" font-weight="900" filter="url(#glow)" opacity="0.95">${escapeXml(pnlPctText)}</text>
-
-    <!-- Divider -->
-    <line x1="60" y1="320" x2="1140" y2="320" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>
-
-    <!-- Stats card -->
-    <rect x="60" y="345" width="500" height="180" rx="16" fill="url(#card)" filter="url(#shadow)"/>
-    <rect x="620" y="345" width="520" height="180" rx="16" fill="url(#card)" filter="url(#shadow)"/>
-
-    <!-- Left card content -->
-    <text x="90" y="385" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">INVESTED</text>
-    <text x="90" y="420" font-family="Arial" font-size="28" fill="#ffffff" font-weight="700">${input.costSol.toFixed(4)} SOL</text>
-
-    <text x="90" y="465" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">RETURNED</text>
-    <text x="90" y="500" font-family="Arial" font-size="28" fill="${pnlColor}" font-weight="700">${input.valueSol.toFixed(4)} SOL</text>
-
-    <!-- Right card content -->
-    <text x="650" y="385" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">PnL (SOL)</text>
-    <text x="650" y="420" font-family="Arial" font-size="28" fill="${pnlColor}" font-weight="700">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
-
-    <text x="650" y="465" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.5" font-weight="600">HELD FOR</text>
-    <text x="650" y="500" font-family="Arial" font-size="28" fill="#ffffff" font-weight="700">${escapeXml(input.heldFor)}</text>
-
-    <!-- Username -->
-    <text x="60" y="590" font-family="Arial" font-size="20" fill="#ffffff" opacity="0.6">@${escapeXml(input.username)}</text>
-
-    <!-- Watermark -->
-    <text x="1140" y="590" font-family="Arial" font-size="16" fill="#ffffff" opacity="0.25" text-anchor="end">Trade smarter with Atlas | Solana</text>
+  const svg = `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
+    <rect width="900" height="500" fill="#080c14"/>
+    <ellipse cx="820" cy="80" rx="220" ry="160" fill="#ffffff" opacity="0.04"/>
+    <ellipse cx="750" cy="420" rx="180" ry="120" fill="#ffffff" opacity="0.03"/>
+    <rect x="0" y="0" width="5" height="500" fill="${pnlColor}"/>
+    <text x="48" y="68" font-family="Arial" font-size="13" fill="${pnlColor}" font-weight="700" letter-spacing="4">ATLAS | SOLANA</text>
+    <text x="48" y="112" font-family="Arial" font-size="36" fill="#ffffff" font-weight="700">${escapeXml(input.mintShort)}</text>
+    <text x="48" y="144" font-family="Arial" font-size="14" fill="#4a5568">Held for ${escapeXml(input.heldFor)}</text>
+    <rect x="48" y="162" width="80" height="2" fill="${pnlColor}" opacity="0.6"/>
+    <text x="44" y="298" font-family="Arial" font-size="152" fill="${pnlColor}" font-weight="900">${escapeXml(pnlPctText)}</text>
+    <rect x="48" y="322" width="600" height="1" fill="#ffffff" opacity="0.08"/>
+    <text x="48" y="358" font-family="Arial" font-size="11" fill="#4a5568" letter-spacing="2.5">INVESTED</text>
+    <text x="48" y="390" font-family="Arial" font-size="27" fill="#ffffff" font-weight="700">${input.costSol.toFixed(4)} SOL</text>
+    <text x="270" y="358" font-family="Arial" font-size="11" fill="#4a5568" letter-spacing="2.5">PAYOUT</text>
+    <text x="270" y="390" font-family="Arial" font-size="27" fill="${pnlColor}" font-weight="700">${input.valueSol.toFixed(4)} SOL</text>
+    <text x="492" y="358" font-family="Arial" font-size="11" fill="#4a5568" letter-spacing="2.5">PNL</text>
+    <text x="492" y="390" font-family="Arial" font-size="27" fill="${pnlColor}" font-weight="700">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
+    <rect x="0" y="448" width="900" height="52" fill="#0d1420"/>
+    <text x="48" y="480" font-family="Arial" font-size="14" fill="#ffffff" opacity="0.5">@${escapeXml(input.username)}</text>
+    <text x="852" y="480" font-family="Arial" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="600">@AtlasSolanaTrading</text>
   </svg>`.trim();
 
   return await sharp(Buffer.from(svg)).png().toBuffer();
