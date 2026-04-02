@@ -1802,6 +1802,7 @@ function buyTokenKeyboard(userId: number) {
       Markup.button.callback(`ⓑ Gas | ${u.buy.gasDeltaSol} SOL`, "BT_SHOW_GAS"),
     ],
     [
+      Markup.button.callback("🔄 Refresh", "BT_REFRESH"),
       Markup.button.callback("⚙️ Buy Limit", "BT_BUY_LIMIT"),
       Markup.button.callback("Return", "BACK_HOME"),
     ],
@@ -3827,6 +3828,14 @@ bot.action("BT_SOL", async (ctx) => {
   await showBuyTokenMenu(ctx, ctx.from!.id);
 });
 
+bot.action("BT_REFRESH", async (ctx) => {
+  await ctx.answerCbQuery("🔄 Refreshing...");
+  const userId = ctx.from!.id;
+  const mint = activeBuyMint.get(userId);
+  if (mint) tokenInfoCache.delete(mint);
+  await showBuyTokenMenu(ctx, userId);
+});
+
 bot.action("BT_GO_SELL", async (ctx) => {
   await ctx.answerCbQuery();
   const userId = ctx.from!.id;
@@ -4204,7 +4213,10 @@ function sellPercentButtons(mint: string) {
   const pcts = [25, 50, 100];
   const rows = [
     pcts.map((p) => Markup.button.callback(`${p}%`, `SELL_${mint}_${p}`)),
-    [Markup.button.callback("❌ Cancel", "FLOW_CANCEL")],
+    [
+      Markup.button.callback("🔄 Refresh", `SELL_REFRESH_${mint}`),
+      Markup.button.callback("❌ Cancel", "FLOW_CANCEL"),
+    ],
   ];
   return Markup.inlineKeyboard(rows);
 }
@@ -4217,6 +4229,37 @@ bot.on("callback_query", async (ctx) => {
     await ctx.answerCbQuery();
     const userId = ctx.from!.id;
     setFlow(userId, "NONE");
+    return;
+  }
+
+  if (data.startsWith("SELL_REFRESH_")) {
+    await ctx.answerCbQuery("🔄 Refreshing...");
+    const userId = ctx.from!.id;
+    const mintStr = data.replace("SELL_REFRESH_", "");
+    const def = getDefaultWallet(userId);
+    if (!def) return;
+
+    try {
+      const mint = new PublicKey(mintStr);
+      const owner = new PublicKey(def.pubkey);
+      const holding = await getTokenHolding(owner, mint);
+      const info = await fetchTokenInfo(mintStr).catch(() => null);
+
+      if (!holding || BigInt(holding.amountRaw) <= 0n) {
+        await ctx.editMessageText(
+          `✅ CA: \`${mintStr}\`\n\n❌ You have 0 of this token.`,
+          { parse_mode: "Markdown", ...bonkMainMenu() }
+        );
+        return;
+      }
+
+      await ctx.editMessageText(
+        `✅ CA: \`${mintStr}\`\n\n${info ? `*${info.name} (${info.symbol})*\nPrice: *${fmtPrice(info.price)}* | MC: *${fmtUsd(info.mc)}*\n\n` : ""}Your balance: *${holding.uiAmount.toLocaleString()}*\nChoose how much to sell:`,
+        { parse_mode: "Markdown", ...sellPercentButtons(mintStr) }
+      );
+    } catch (e: any) {
+      await ctx.answerCbQuery("Failed to refresh");
+    }
     return;
   }
 
