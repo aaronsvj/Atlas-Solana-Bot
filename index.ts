@@ -1088,42 +1088,22 @@ async function buildWalletPopupText(walletId: string, userId: number, fetchLive 
 
 async function homeText(userId: number) {
   const def = getDefaultWallet(userId);
-  const u = getUser(userId);
-  const walletLine = def
-    ? `\nYour wallet: \`${def.pubkey}\``
-    : "\nNo wallet yet. Tap Wallet.";
 
-  // Build live positions summary
-  let positionsLine = "";
-  const positions = (u.positions || []).filter((p: any) => def && p.wallet === def.name);
-  if (positions.length > 0 && def) {
-    const infos = await Promise.all(
-      positions.map((p: any) => fetchTokenInfo(p.mint).catch(() => null))
-    );
-    const lines: string[] = [];
-    for (let i = 0; i < positions.length; i++) {
-      const p = positions[i] as any;
-      const info = infos[i];
-      if (!info) continue;
-      const holding = await getTokenHolding(new PublicKey(def.pubkey), new PublicKey(p.mint)).catch(() => null);
-      const uiAmt = holding?.uiAmount ?? 0;
-      const currentValue = uiAmt * info.price;
-      const entrySol = p.entry || 0;
-      const pnlPct = entrySol > 0 ? ((currentValue - entrySol) / entrySol) * 100 : 0;
-      const sign = pnlPct >= 0 ? "+" : "";
-      const emoji = pnlPct >= 0 ? "🟢" : "🔴";
-      lines.push(`${emoji} *${info.symbol}* | ${sign}${pnlPct.toFixed(1)}% | MC $${fmtUsd(info.mc)}`);
-    }
-    if (lines.length > 0) {
-      positionsLine = `\n\n📊 *Positions*\n` + lines.join("\n");
-    }
-  }
+  const walletLine = def
+    ? `💳 *Wallet:* \`${def.pubkey}\``
+    : `⚠️ No wallet yet — tap *Wallet* to get started.`;
+
+  const solBal = def ? await getCachedBalance(def.pubkey).catch(() => 0) : 0;
+  const balLine = def ? `💰 *Balance:* ${solBal.toFixed(4)} SOL` : "";
 
   return (
     `🤖 *Atlas | Solana*\n` +
-    `Use the menu below to trade.\n` +
-    `${walletLine}` +
-    positionsLine
+    `The fastest and most secure bot for trading any token on Solana.\n\n` +
+    `⚡ *Quick buy/sell:* Paste any token CA and you're ready to go!\n` +
+    `📊 *Copytrade* any wallet. Set *Limit Orders* with TP/SL.\n` +
+    `🔒 Your keys are encrypted and never leave the bot.\n\n` +
+    `${walletLine}\n` +
+    `${balLine}`
   );
 }
 
@@ -1484,21 +1464,21 @@ function walletPopupKeyboard(walletId: string) {
 }
 function bonkMainMenu() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("Buy", "MENU_BUY"), Markup.button.callback("Fund", "MENU_FUND")],
+    [Markup.button.callback("🟢 Buy", "MENU_BUY"), Markup.button.callback("💸 Fund", "MENU_FUND")],
     [
-      Markup.button.callback("Wallet", "MENU_WALLET"),
-      Markup.button.callback("Refer Friends", "MENU_REFER"),
-      Markup.button.callback("Positions", "MENU_POSITIONS"),
+      Markup.button.callback("👛 Wallet", "MENU_WALLET"),
+      Markup.button.callback("🎁 Refer Friends", "MENU_REFER"),
+      Markup.button.callback("📊 Positions", "MENU_POSITIONS"),
     ],
     [
-      Markup.button.callback("Help", "MENU_HELP"),
-      Markup.button.callback("Settings", "MENU_GLOBAL_SETTINGS"),
+      Markup.button.callback("❓ Help", "MENU_HELP"),
+      Markup.button.callback("⚙️ Settings", "MENU_GLOBAL_SETTINGS"),
     ],
     [
-      Markup.button.callback("Copytrade", "MENU_COPYTRADE"),
-      Markup.button.callback("Limit Orders", "MENU_LIMIT_ORDERS"),
+      Markup.button.callback("🤖 Copytrade", "MENU_COPYTRADE"),
+      Markup.button.callback("📈 Limit Orders", "MENU_LIMIT_ORDERS"),
     ],
-    [Markup.button.callback("Refresh", "MENU_REFRESH")],
+    [Markup.button.callback("🔄 Refresh", "MENU_REFRESH")],
   ]);
 }
 
