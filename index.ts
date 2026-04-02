@@ -5421,18 +5421,23 @@ bot.command("refstats", async (ctx) => {
 });
 
 // ── Startup ──────────────────────────────────────────────────────────────
-rebuildWalletFollowers();
-syncHeliusWebhookFromDB().catch(e => console.error("Helius sync error:", e));
-startWebhookServer(handleHeliusEvent);
+(async () => {
+  rebuildWalletFollowers();
+  syncHeliusWebhookFromDB().catch(e => console.error("Helius sync error:", e));
+  startWebhookServer(handleHeliusEvent);
 
-bot.launch({
-  allowedUpdates: ["message", "callback_query"],
-}).catch((e) => {
-  console.error("❌ Failed to launch bot:", e);
-  process.exit(1);
-});
+  // Clear any stale polling sessions before launch
+  await bot.telegram.deleteWebhook({ drop_pending_updates: true });
 
-console.log("🤖 Bot running... send /start in Telegram now");
+  bot.launch({
+    allowedUpdates: ["message", "callback_query"],
+  }).catch((e) => {
+    console.error("❌ Failed to launch bot:", e);
+    process.exit(1);
+  });
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  console.log("🤖 Bot running... send /start in Telegram now");
+
+  process.once("SIGINT", () => bot.stop("SIGINT"));
+  process.once("SIGTERM", () => bot.stop("SIGTERM"));
+})();
