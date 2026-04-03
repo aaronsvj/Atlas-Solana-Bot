@@ -1997,13 +1997,16 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const fontFile = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
   const fontBold = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const pc = input.pnlPct >= 0 ? { r:26,g:140,b:255 } : { r:255,g:68,b:68 };
 
   async function makeText(text: string, size: number, bold: boolean, color: {r:number,g:number,b:number}, maxW: number, maxH: number): Promise<Buffer> {
+    const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const pango = bold
+      ? `<span foreground="rgb(${color.r},${color.g},${color.b})"><b>${esc2(text)}</b></span>`
+      : `<span foreground="rgb(${color.r},${color.g},${color.b})">${esc2(text)}</span>`;
     return sharp({
       text: {
-        text: bold ? `<b>${esc(text)}</b>` : esc(text),
+        text: pango,
         fontfile: bold ? fontBold : fontFile,
         font: "DejaVu Sans",
         fontSize: size,
@@ -2011,15 +2014,16 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
         width: maxW,
         height: maxH,
       }
-    } as any).tint(color).png().toBuffer();
+    } as any).png().toBuffer();
   }
 
   const W = 900, H = 500;
-  const bg     = await sharp({ create: { width:W, height:H, channels:4, background:{r:8,g:12,b:20,alpha:1} }}).png().toBuffer();
-  const accent = await sharp({ create: { width:5, height:H, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
-  const bot    = await sharp({ create: { width:W, height:52, channels:4, background:{r:13,g:20,b:32,alpha:1} }}).png().toBuffer();
-  const sep    = await sharp({ create: { width:600, height:1, channels:4, background:{r:255,g:255,b:255,alpha:0.1} }}).png().toBuffer();
-  const bar    = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
+  const bg      = await sharp({ create: { width:W, height:H, channels:4, background:{r:8,g:12,b:20,alpha:1} }}).png().toBuffer();
+  const bubble1 = Buffer.from(`<svg width="900" height="500"><ellipse cx="820" cy="80" rx="220" ry="160" fill="white" opacity="0.04"/><ellipse cx="750" cy="420" rx="180" ry="120" fill="white" opacity="0.03"/></svg>`);
+  const accent  = await sharp({ create: { width:5, height:H, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
+  const bot     = await sharp({ create: { width:W, height:52, channels:4, background:{r:13,g:20,b:32,alpha:1} }}).png().toBuffer();
+  const sep     = await sharp({ create: { width:600, height:1, channels:4, background:{r:255,g:255,b:255,alpha:0.1} }}).png().toBuffer();
+  const bar     = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
 
   const tBrand = await makeText("ATLAS | SOLANA",                      12,  true,  pc,                   260, 28);
   const tToken = await makeText(input.mintShort,                       30,  true,  {r:255,g:255,b:255},  620, 48);
@@ -2035,6 +2039,7 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const tWmark = await makeText("@AtlasSolanaTrading",                 12,  true,  pc,                   250, 26);
 
   return sharp(bg).composite([
+    { input: bubble1, top:0,  left:0   },
     { input: accent, top:0,   left:0   },
     { input: bot,    top:448, left:0   },
     { input: sep,    top:322, left:48  },
