@@ -5683,7 +5683,7 @@ bot.command("refstats", async (ctx) => {
 
   rebuildWalletFollowers();
   syncHeliusWebhookFromDB().catch(e => console.error("Helius sync error:", e));
-  startWebhookServer(handleHeliusEvent);
+  startWebhookServer(handleHeliusEvent, connection, bot);
 
   // Clear any stale polling sessions before launch
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
