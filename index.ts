@@ -2002,9 +2002,22 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   async function makeText(text: string, size: number, bold: boolean, color: {r:number,g:number,b:number}, maxW: number, maxH: number): Promise<Buffer> {
     const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const pango = bold ? `<b>${esc2(text)}</b>` : esc2(text);
-    return sharp({
+    // Render text — black on transparent
+    const textBuf = await sharp({
       text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH }
-    } as any).negate({ alpha: false }).tint(color).png().toBuffer();
+    } as any).png().toBuffer();
+    // Manually paint target color: use darkness of each pixel as alpha for colored output
+    const { data, info } = await sharp(textBuf).raw().toBuffer({ resolveWithObject: true });
+    const w = info.width, h = info.height;
+    const out = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const textStrength = 255 - data[i * 4]; // black pixel → 255, transparent → 0
+      out[i * 4 + 0] = color.r;
+      out[i * 4 + 1] = color.g;
+      out[i * 4 + 2] = color.b;
+      out[i * 4 + 3] = textStrength;
+    }
+    return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
   const W = 900, H = 500;
