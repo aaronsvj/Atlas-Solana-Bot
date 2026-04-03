@@ -2006,16 +2006,15 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     const textBuf = await sharp({
       text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH }
     } as any).png().toBuffer();
-    // Manually paint target color: use darkness of each pixel as alpha for colored output
+    // Use the alpha channel as the text mask — rgba:true means text=alpha 255, bg=alpha 0
     const { data, info } = await sharp(textBuf).raw().toBuffer({ resolveWithObject: true });
     const w = info.width, h = info.height;
     const out = Buffer.alloc(w * h * 4);
     for (let i = 0; i < w * h; i++) {
-      const textStrength = 255 - data[i * 4]; // black pixel → 255, transparent → 0
       out[i * 4 + 0] = color.r;
       out[i * 4 + 1] = color.g;
       out[i * 4 + 2] = color.b;
-      out[i * 4 + 3] = textStrength;
+      out[i * 4 + 3] = data[i * 4 + 3]; // alpha channel: text pixels opaque, bg transparent
     }
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
