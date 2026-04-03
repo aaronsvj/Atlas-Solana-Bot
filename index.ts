@@ -2020,42 +2020,30 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  const W = 900, H = 500;
-  const bg      = await sharp({ create: { width:W, height:H, channels:4, background:{r:8,g:12,b:20,alpha:1} }}).png().toBuffer();
-  const bubble1 = Buffer.from(`<svg width="900" height="500"><ellipse cx="820" cy="80" rx="220" ry="160" fill="white" opacity="0.04"/><ellipse cx="750" cy="420" rx="180" ry="120" fill="white" opacity="0.03"/></svg>`);
-  const accent  = await sharp({ create: { width:5, height:H, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
-  const bot     = await sharp({ create: { width:W, height:52, channels:4, background:{r:13,g:20,b:32,alpha:1} }}).png().toBuffer();
-  const sep     = await sharp({ create: { width:600, height:1, channels:4, background:{r:255,g:255,b:255,alpha:0.1} }}).png().toBuffer();
-  const bar     = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
+  // Load static background (baked in Canva — includes bg, bubbles, accent bar, bottom bar, labels)
+  const bgPath = path.join(process.cwd(), "pnl_bg.png");
+  const bg = await sharp(bgPath).png().toBuffer();
 
-  const tBrand = await makeText("ATLAS | SOLANA",                      12,  true,  pc,                   260, 28);
-  const tToken = await makeText(input.mintShort,                       30,  true,  {r:255,g:255,b:255},  620, 48);
-  const tHeld  = await makeText("Held for "+input.heldFor,             13,  false, {r:100,g:116,b:139},  300, 26);
-  const tPnl   = await makeText(pnlPctText,                            130, true,  pc,                   720, 165);
-  const tIL    = await makeText("INVESTED",                            10,  false, {r:100,g:116,b:139},  140, 20);
-  const tIV    = await makeText(input.costSol.toFixed(4)+" SOL",       24,  true,  {r:255,g:255,b:255},  220, 38);
-  const tPL    = await makeText("PAYOUT",                              10,  false, {r:100,g:116,b:139},  140, 20);
-  const tPV    = await makeText(input.valueSol.toFixed(4)+" SOL",      24,  true,  pc,                   220, 38);
-  const tNL    = await makeText("PNL",                                 10,  false, {r:100,g:116,b:139},  100, 20);
-  const tNV    = await makeText(pnlSign+input.pnlSol.toFixed(4)+" SOL",24,  true,  pc,                   240, 38);
-  const tUser  = await makeText("@"+input.username,                    13,  false, {r:148,g:163,b:184},  220, 26);
-  const tWmark = await makeText("@AtlasSolanaTrading",                 12,  true,  pc,                   250, 26);
+  const accent = await sharp({ create: { width:5, height:500, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
+  const bar    = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
+
+  const tToken = await makeText(input.mintShort,                        30,  true,  {r:255,g:255,b:255},  620, 48);
+  const tHeld  = await makeText("Held for "+input.heldFor,              13,  false, {r:100,g:116,b:139},  300, 26);
+  const tPnl   = await makeText(pnlPctText,                             130, true,  pc,                   720, 165);
+  const tIV    = await makeText(input.costSol.toFixed(4)+" SOL",        24,  true,  {r:255,g:255,b:255},  220, 38);
+  const tPV    = await makeText(input.valueSol.toFixed(4)+" SOL",       24,  true,  pc,                   220, 38);
+  const tNV    = await makeText(pnlSign+input.pnlSol.toFixed(4)+" SOL", 24,  true,  pc,                   240, 38);
+  const tUser  = await makeText("@"+input.username,                     13,  false, {r:148,g:163,b:184},  220, 26);
+  const tWmark = await makeText("@AtlasSolanaTrading",                  12,  true,  pc,                   250, 26);
 
   return sharp(bg).composite([
-    { input: bubble1, top:0,  left:0   },
     { input: accent, top:0,   left:0   },
-    { input: bot,    top:448, left:0   },
-    { input: sep,    top:322, left:48  },
     { input: bar,    top:162, left:48  },
-    { input: tBrand, top:48,  left:48  },
     { input: tToken, top:78,  left:48  },
     { input: tHeld,  top:128, left:48  },
     { input: tPnl,   top:152, left:44  },
-    { input: tIL,    top:334, left:48  },
     { input: tIV,    top:352, left:48  },
-    { input: tPL,    top:334, left:300 },
     { input: tPV,    top:352, left:300 },
-    { input: tNL,    top:334, left:530 },
     { input: tNV,    top:352, left:530 },
     { input: tUser,  top:460, left:48  },
     { input: tWmark, top:460, left:615 },
