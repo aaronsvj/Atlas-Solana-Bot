@@ -1,4 +1,5 @@
 import "dotenv/config";
+import sharp from "sharp";
 import { Telegraf, Markup } from "telegraf";
 import { startWebhookServer } from "./webhook";
 import {
@@ -1990,115 +1991,49 @@ type PnlCardInput = {
 };
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
-  // @ts-ignore — canvas is a native module, types resolve on Railway but not Windows
-  const { createCanvas, registerFont } = await import("canvas") as any;
+  const fs = await import("fs");
   const path = await import("path");
-
-  // Register bundled DejaVu Sans fonts so canvas uses them on any OS
-  const ttfBase = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf");
-  try {
-    registerFont(path.join(ttfBase, "DejaVuSans.ttf"), { family: "DVS", weight: "normal" });
-    registerFont(path.join(ttfBase, "DejaVuSans-Bold.ttf"), { family: "DVS", weight: "bold" });
-  } catch {}
 
   const pnlSign = input.pnlPct >= 0 ? "+" : "";
   const pnlColor = input.pnlPct >= 0 ? "#1a8cff" : "#ff4444";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
 
-  const W = 900, H = 500;
-  const canvas = createCanvas(W, H);
-  const ctx = canvas.getContext("2d");
+  const fontPath = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
+  const fontB64 = fs.readFileSync(fontPath).toString("base64");
+  const fontRegPath = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
+  const fontRegB64 = fs.readFileSync(fontRegPath).toString("base64");
 
-  // Background
-  ctx.fillStyle = "#080c14";
-  ctx.fillRect(0, 0, W, H);
+  const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
-  // Decorative bubbles
-  ctx.globalAlpha = 0.04;
-  ctx.fillStyle = "#ffffff";
-  ctx.beginPath(); ctx.ellipse(820, 80, 220, 160, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 0.03;
-  ctx.beginPath(); ctx.ellipse(750, 420, 180, 120, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
+  const svg = `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <style>
+        @font-face { font-family: 'DVS'; src: url('data:font/truetype;base64,${fontRegB64}'); font-weight: normal; }
+        @font-face { font-family: 'DVS'; src: url('data:font/truetype;base64,${fontB64}'); font-weight: bold; }
+      </style>
+    </defs>
+    <rect width="900" height="500" fill="#080c14"/>
+    <ellipse cx="820" cy="80" rx="220" ry="160" fill="#ffffff" opacity="0.04"/>
+    <ellipse cx="750" cy="420" rx="180" ry="120" fill="#ffffff" opacity="0.03"/>
+    <rect x="0" y="0" width="5" height="500" fill="${pnlColor}"/>
+    <text x="48" y="68" font-family="DVS" font-size="13" fill="${pnlColor}" font-weight="bold">${esc("ATLAS | SOLANA")}</text>
+    <text x="48" y="112" font-family="DVS" font-size="36" fill="#ffffff" font-weight="bold">${esc(input.mintShort)}</text>
+    <text x="48" y="144" font-family="DVS" font-size="14" fill="#64748b">Held for ${esc(input.heldFor)}</text>
+    <rect x="48" y="162" width="80" height="2" fill="${pnlColor}" opacity="0.6"/>
+    <text x="44" y="298" font-family="DVS" font-size="148" fill="${pnlColor}" font-weight="bold">${esc(pnlPctText)}</text>
+    <rect x="48" y="322" width="600" height="1" fill="#ffffff" opacity="0.08"/>
+    <text x="48" y="354" font-family="DVS" font-size="10" fill="#64748b">INVESTED</text>
+    <text x="48" y="388" font-family="DVS" font-size="27" fill="#ffffff" font-weight="bold">${input.costSol.toFixed(4)} SOL</text>
+    <text x="272" y="354" font-family="DVS" font-size="10" fill="#64748b">PAYOUT</text>
+    <text x="272" y="388" font-family="DVS" font-size="27" fill="${pnlColor}" font-weight="bold">${input.valueSol.toFixed(4)} SOL</text>
+    <text x="496" y="354" font-family="DVS" font-size="10" fill="#64748b">PNL</text>
+    <text x="496" y="388" font-family="DVS" font-size="27" fill="${pnlColor}" font-weight="bold">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
+    <rect x="0" y="448" width="900" height="52" fill="#0d1420"/>
+    <text x="48" y="480" font-family="DVS" font-size="14" fill="#94a3b8">@${esc(input.username)}</text>
+    <text x="852" y="480" font-family="DVS" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="bold">@AtlasSolanaTrading</text>
+  </svg>`;
 
-  // Left accent bar
-  ctx.fillStyle = pnlColor;
-  ctx.fillRect(0, 0, 5, H);
-
-  // Bottom bar
-  ctx.fillStyle = "#0d1420";
-  ctx.fillRect(0, 448, W, 52);
-
-  // "ATLAS | SOLANA"
-  ctx.fillStyle = pnlColor;
-  ctx.font = "bold 12px DVS";
-  ctx.letterSpacing = "4px";
-  ctx.fillText("ATLAS | SOLANA", 48, 65);
-  ctx.letterSpacing = "0px";
-
-  // Token name
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 32px DVS";
-  ctx.fillText(input.mintShort, 48, 108);
-
-  // Held for
-  ctx.fillStyle = "#64748b";
-  ctx.font = "14px DVS";
-  ctx.fillText(`Held for ${input.heldFor}`, 48, 138);
-
-  // Accent line under held
-  ctx.globalAlpha = 0.6;
-  ctx.fillStyle = pnlColor;
-  ctx.fillRect(48, 162, 80, 2);
-  ctx.globalAlpha = 1;
-
-  // Big PnL %
-  ctx.fillStyle = pnlColor;
-  ctx.font = "bold 130px DVS";
-  ctx.fillText(pnlPctText, 44, 295);
-
-  // Separator line
-  ctx.globalAlpha = 0.1;
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(48, 322, 600, 1);
-  ctx.globalAlpha = 1;
-
-  // Stats — INVESTED
-  ctx.fillStyle = "#64748b";
-  ctx.font = "10px DVS";
-  ctx.fillText("INVESTED", 48, 350);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 26px DVS";
-  ctx.fillText(`${input.costSol.toFixed(4)} SOL`, 48, 384);
-
-  // Stats — PAYOUT
-  ctx.fillStyle = "#64748b";
-  ctx.font = "10px DVS";
-  ctx.fillText("PAYOUT", 272, 350);
-  ctx.fillStyle = pnlColor;
-  ctx.font = "bold 26px DVS";
-  ctx.fillText(`${input.valueSol.toFixed(4)} SOL`, 272, 384);
-
-  // Stats — PNL
-  ctx.fillStyle = "#64748b";
-  ctx.font = "10px DVS";
-  ctx.fillText("PNL", 496, 350);
-  ctx.fillStyle = pnlColor;
-  ctx.font = "bold 26px DVS";
-  ctx.fillText(`${pnlSign}${input.pnlSol.toFixed(4)} SOL`, 496, 384);
-
-  // Username (bottom left)
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "13px DVS";
-  ctx.fillText(`@${input.username}`, 48, 476);
-
-  // Watermark (bottom right)
-  ctx.fillStyle = pnlColor;
-  ctx.font = "bold 12px DVS";
-  ctx.textAlign = "right";
-  ctx.fillText("@AtlasSolanaTrading", 852, 476);
-
-  return canvas.toBuffer("image/png");
+  return await sharp(Buffer.from(svg)).png().toBuffer();
 }
 
 /* =========================
