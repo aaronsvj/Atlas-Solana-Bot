@@ -2002,9 +2002,16 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   async function makeText(text: string, size: number, bold: boolean, color: {r:number,g:number,b:number}, maxW: number, maxH: number): Promise<Buffer> {
     const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const pango = bold ? `<b>${esc2(text)}</b>` : esc2(text);
-    return sharp({
+    // sharp text renders white-on-transparent; negate → black-on-transparent
+    // multiply with a solid color layer to colorize the text
+    const negated = await sharp({
       text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH }
-    } as any).negate({ alpha: false }).tint(color).png().toBuffer();
+    } as any).negate({ alpha: false }).png().toBuffer();
+    const meta = await sharp(negated).metadata();
+    const w = meta.width ?? maxW;
+    const h = meta.height ?? maxH;
+    const colorLayer = await sharp({ create: { width: w, height: h, channels: 4, background: { ...color, alpha: 1 } } }).png().toBuffer();
+    return sharp(negated).composite([{ input: colorLayer, blend: "multiply" }]).png().toBuffer();
   }
 
   const W = 900, H = 500;
