@@ -1991,22 +1991,30 @@ type PnlCardInput = {
 };
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
-  const path = await import("path");
-  const pnlSign = input.pnlPct >= 0 ? "+" : "";
+  const pathMod = await import("path");
+  const fsMod   = await import("fs");
+
+  const pnlSign    = input.pnlPct >= 0 ? "+" : "";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
-  const fontFile = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
-  const fontBold = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  const pc = input.pnlPct >= 0 ? { r:26,g:140,b:255 } : { r:255,g:68,b:68 };
+  const fontFile = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
+  const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  async function makeText(text: string, size: number, bold: boolean, color: {r:number,g:number,b:number}, maxW: number, maxH: number): Promise<Buffer> {
-    const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const pc     = input.pnlPct >= 0 ? { r: 26,  g: 140, b: 255 } : { r: 255, g: 68,  b: 68  };
+  const white  = { r: 255, g: 255, b: 255 };
+  const muted  = { r: 100, g: 116, b: 139 };
+  const muted2 = { r: 148, g: 163, b: 184 };
+
+  async function makeText(
+    text: string, size: number, bold: boolean,
+    color: { r: number; g: number; b: number },
+    maxW: number, maxH: number
+  ): Promise<Buffer> {
+    const esc2 = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const pango = bold ? `<b>${esc2(text)}</b>` : esc2(text);
-    // Render text — black on transparent
-    const textBuf = await sharp({
-      text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH }
-    } as any).png().toBuffer();
-    // Use the alpha channel as the text mask — rgba:true means text=alpha 255, bg=alpha 0
+    const textBuf = await (sharp as any)({
+      text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH },
+    }).png().toBuffer();
     const { data, info } = await sharp(textBuf).raw().toBuffer({ resolveWithObject: true });
     const w = info.width, h = info.height;
     const out = Buffer.alloc(w * h * 4);
@@ -2014,43 +2022,63 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
       out[i * 4 + 0] = color.r;
       out[i * 4 + 1] = color.g;
       out[i * 4 + 2] = color.b;
-      out[i * 4 + 3] = data[i * 4 + 3]; // alpha channel: text pixels opaque, bg transparent
+      out[i * 4 + 3] = data[i * 4 + 3];
     }
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  // Load static background if available, otherwise generate one
-  const fs = await import("fs");
-  const bgPath = path.join(process.cwd(), "pnl_bg.png");
-  const bg = fs.existsSync(bgPath)
-    ? await sharp(bgPath).png().toBuffer()
-    : await sharp({ create: { width:900, height:500, channels:4, background:{r:8,g:12,b:20,alpha:1} }})
-        .composite([{ input: Buffer.from(`<svg width="900" height="500"><ellipse cx="820" cy="80" rx="220" ry="160" fill="white" opacity="0.04"/><ellipse cx="750" cy="420" rx="180" ry="120" fill="white" opacity="0.03"/></svg>`), top:0, left:0 }])
+  // Background
+  const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
+  const bg = fsMod.existsSync(bgPath)
+    ? await sharp(bgPath).resize(900, 500).png().toBuffer()
+    : await sharp({ create: { width: 900, height: 500, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } } })
+        .composite([{ input: Buffer.from(
+          `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">` +
+          `<rect width="900" height="500" fill="#0a0e1a"/>` +
+          `<circle cx="820" cy="60" r="200" fill="#0d1829" opacity="0.9"/>` +
+          `<circle cx="820" cy="60" r="140" fill="#0f1f35" opacity="0.7"/>` +
+          `<circle cx="100" cy="480" r="120" fill="#0d1829" opacity="0.5"/>` +
+          `</svg>`
+        ), top: 0, left: 0 }])
         .png().toBuffer();
 
-  const accent = await sharp({ create: { width:5, height:500, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
-  const bar    = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
+  // SVG overlay — lines and column labels (no font lookup needed for simple SVG text)
+  const dividerY = 330;
+  const footerY  = 440;
+  const svg = Buffer.from(
+    `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">` +
+    `<rect x="0" y="0" width="4" height="500" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
+    `<rect x="48" y="162" width="60" height="2" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.8"/>` +
+    `<rect x="48" y="${dividerY}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.25"/>` +
+    `<rect x="48" y="${footerY}" width="804" height="1" fill="rgba(255,255,255,0.1)"/>` +
+    `<text x="48"  y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">INVESTED</text>` +
+    `<text x="300" y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">PAYOUT</text>` +
+    `<text x="530" y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">PNL</text>` +
+    `</svg>`
+  );
 
-  const tToken = await makeText(input.mintShort,                        30,  true,  {r:255,g:255,b:255},  620, 48);
-  const tHeld  = await makeText("Held for "+input.heldFor,              13,  false, {r:100,g:116,b:139},  300, 26);
-  const tPnl   = await makeText(pnlPctText,                             130, true,  pc,                   720, 165);
-  const tIV    = await makeText(input.costSol.toFixed(4)+" SOL",        24,  true,  {r:255,g:255,b:255},  220, 38);
-  const tPV    = await makeText(input.valueSol.toFixed(4)+" SOL",       24,  true,  pc,                   220, 38);
-  const tNV    = await makeText(pnlSign+input.pnlSol.toFixed(4)+" SOL", 24,  true,  pc,                   240, 38);
-  const tUser  = await makeText("@"+input.username,                     13,  false, {r:148,g:163,b:184},  220, 26);
-  const tWmark = await makeText("@AtlasSolanaTrading",                  12,  true,  pc,                   250, 26);
+  // Text buffers
+  const tAtlas = await makeText("ATLAS | SOLANA",                            10, false, pc,     200, 20);
+  const tToken = await makeText(input.mintShort,                             28, true,  white,  620, 44);
+  const tHeld  = await makeText("Held for " + input.heldFor,                 13, false, muted,  300, 24);
+  const tPnl   = await makeText(pnlPctText,                                  130, true, pc,     720, 160);
+  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           22, true,  white,  220, 36);
+  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          22, true,  pc,     220, 36);
+  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  22, true,  pc,     240, 36);
+  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 220, 24);
+  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pc,     250, 24);
 
   return sharp(bg).composite([
-    { input: accent, top:0,   left:0   },
-    { input: bar,    top:162, left:48  },
-    { input: tToken, top:78,  left:48  },
-    { input: tHeld,  top:128, left:48  },
-    { input: tPnl,   top:152, left:44  },
-    { input: tIV,    top:352, left:48  },
-    { input: tPV,    top:352, left:300 },
-    { input: tNV,    top:352, left:530 },
-    { input: tUser,  top:460, left:48  },
-    { input: tWmark, top:460, left:615 },
+    { input: svg,    top: 0,              left: 0   },
+    { input: tAtlas, top: 38,             left: 48  },
+    { input: tToken, top: 60,             left: 48  },
+    { input: tHeld,  top: 115,            left: 48  },
+    { input: tPnl,   top: 152,            left: 44  },
+    { input: tIV,    top: dividerY + 32,  left: 48  },
+    { input: tPV,    top: dividerY + 32,  left: 300 },
+    { input: tNV,    top: dividerY + 32,  left: 530 },
+    { input: tUser,  top: footerY + 16,   left: 48  },
+    { input: tWmark, top: footerY + 16,   left: 615 },
   ]).png().toBuffer();
 }
 
