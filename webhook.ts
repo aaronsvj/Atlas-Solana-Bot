@@ -1,4 +1,7 @@
 import express from "express";
+import crypto from "crypto";
+
+const HELIUS_WEBHOOK_SECRET = process.env.HELIUS_WEBHOOK_SECRET ?? "";
 
 export function startWebhookServer(processEvent: (event: any) => Promise<void>) {
 
@@ -7,17 +10,32 @@ export function startWebhookServer(processEvent: (event: any) => Promise<void>) 
 
   app.post("/helius-webhook", async (req: any, res: any) => {
 
-     const events = req.body;
+    // Verify Helius signature if secret is configured
+    if (HELIUS_WEBHOOK_SECRET) {
+      const signature = (req.headers["authorization"] as string) ?? "";
+      const body = JSON.stringify(req.body);
+      const expected = crypto
+        .createHmac("sha256", HELIUS_WEBHOOK_SECRET)
+        .update(body)
+        .digest("hex");
+      if (signature !== expected) {
+        console.warn("⚠️ Webhook signature mismatch — rejected");
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+    }
 
-     for (const event of events) {
-        await processEvent(event);
-     }
+    const events = req.body;
 
-     res.sendStatus(200);
+    for (const event of events) {
+      await processEvent(event);
+    }
+
+    res.sendStatus(200);
   });
 
   app.listen(3001, () => {
-     console.log("Webhook server running on port 3001");
+    console.log("Webhook server running on port 3001");
   });
 
 }

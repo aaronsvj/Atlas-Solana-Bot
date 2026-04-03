@@ -1033,6 +1033,7 @@ async function setHeliusWebhookAddresses(addresses: string[]) {
         transactionTypes: ["SWAP"],
         accountAddresses: addresses,
         webhookType: "enhanced",
+        ...(process.env.HELIUS_WEBHOOK_SECRET ? { authHeader: process.env.HELIUS_WEBHOOK_SECRET } : {}),
       }),
     }
   );
