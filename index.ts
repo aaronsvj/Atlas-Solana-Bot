@@ -2011,7 +2011,7 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
         width: maxW,
         height: maxH,
       }
-    } as any).negate({ alpha: false }).tint(color).png().toBuffer();
+    } as any).tint(color).png().toBuffer();
   }
 
   const W = 900, H = 500;
@@ -2045,10 +2045,10 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     { input: tPnl,   top:152, left:44  },
     { input: tIL,    top:334, left:48  },
     { input: tIV,    top:352, left:48  },
-    { input: tPL,    top:334, left:272 },
-    { input: tPV,    top:352, left:272 },
-    { input: tNL,    top:334, left:496 },
-    { input: tNV,    top:352, left:496 },
+    { input: tPL,    top:334, left:300 },
+    { input: tPV,    top:352, left:300 },
+    { input: tNL,    top:334, left:530 },
+    { input: tNV,    top:352, left:530 },
     { input: tUser,  top:460, left:48  },
     { input: tWmark, top:460, left:615 },
   ]).png().toBuffer();
@@ -2732,7 +2732,7 @@ bot.command("cancel", async (ctx) => {
 });
 
 bot.command("pnl", async (ctx) => {
-  const username = ctx.from?.username ? `@${ctx.from.username}` : `User ${ctx.from?.id}`;
+  const username = ctx.from?.username ?? ctx.from?.first_name ?? `User${ctx.from?.id}`;
 
   const png = await renderPnlCardPng({
     username,
@@ -4441,7 +4441,7 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
         const pnlSol = solReceived - entrySol;
         const pnlPct = entrySol > 0 ? ((solReceived - entrySol) / entrySol) * 100 : 0;
         const info = await fetchTokenInfo(mintStr).catch(() => null);
-        const username = ctx.from?.username ?? `User${userId}`;
+        const username = ctx.from?.username ?? ctx.from?.first_name ?? `User${userId}`;
         const png = await renderPnlCardPng({
           username,
           mintShort: info ? `${info.name} (${info.symbol})` : shortAddr(mintStr, 6, 4),
@@ -4735,7 +4735,7 @@ bot.on("callback_query", async (ctx) => {
           const pnlSol = solReceived - entrySol;
           const pnlPct = entrySol > 0 ? ((solReceived - entrySol) / entrySol) * 100 : 0;
           const info = await fetchTokenInfo(mint.toBase58()).catch(() => null);
-          const username = ctx.from?.username ?? `User${userId}`;
+          const username = ctx.from?.username ?? ctx.from?.first_name ?? `User${userId}`;
 
           const png = await renderPnlCardPng({
             username,
