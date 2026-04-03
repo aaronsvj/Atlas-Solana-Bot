@@ -1994,23 +1994,25 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const pathMod = await import("path");
   const fsMod   = await import("fs");
 
+  const W = 900, H = 500;
   const pnlSign    = input.pnlPct >= 0 ? "+" : "";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
+  const multiplier = (input.valueSol / input.costSol).toFixed(2) + "x";
 
   const fontFile = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
   const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  const pc     = input.pnlPct >= 0 ? { r: 26,  g: 140, b: 255 } : { r: 255, g: 68,  b: 68  };
-  const white  = { r: 255, g: 255, b: 255 };
-  const muted  = { r: 100, g: 116, b: 139 };
-  const muted2 = { r: 148, g: 163, b: 184 };
+  const pc    = input.pnlPct >= 0 ? { r: 26,  g: 140, b: 255 } : { r: 255, g: 68,  b: 68  };
+  const white = { r: 255, g: 255, b: 255 };
+  const muted = { r: 100, g: 116, b: 139 };
+  const muted2= { r: 148, g: 163, b: 184 };
 
   async function makeText(
     text: string, size: number, bold: boolean,
     color: { r: number; g: number; b: number },
     maxW: number, maxH: number
   ): Promise<Buffer> {
-    const esc2 = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const pango = bold ? `<b>${esc2(text)}</b>` : esc2(text);
     const textBuf = await (sharp as any)({
       text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH },
@@ -2027,59 +2029,76 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  // Background
   const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
   const bg = fsMod.existsSync(bgPath)
-    ? await sharp(bgPath).resize(900, 500).png().toBuffer()
-    : await sharp({ create: { width: 900, height: 500, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } } })
+    ? await sharp(bgPath).resize(W, H).png().toBuffer()
+    : await sharp({ create: { width: W, height: H, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } } })
         .composite([{ input: Buffer.from(
-          `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">` +
-          `<rect width="900" height="500" fill="#0a0e1a"/>` +
-          `<circle cx="820" cy="60" r="200" fill="#0d1829" opacity="0.9"/>` +
-          `<circle cx="820" cy="60" r="140" fill="#0f1f35" opacity="0.7"/>` +
-          `<circle cx="100" cy="480" r="120" fill="#0d1829" opacity="0.5"/>` +
+          `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
+          `<rect width="${W}" height="${H}" fill="#0a0e1a"/>` +
+          `<circle cx="820" cy="80"  r="200" fill="#1a2a3a" opacity="0.6"/>` +
+          `<circle cx="820" cy="420" r="160" fill="#1a2a3a" opacity="0.5"/>` +
           `</svg>`
         ), top: 0, left: 0 }])
         .png().toBuffer();
 
-  // SVG overlay — lines and column labels (no font lookup needed for simple SVG text)
-  const dividerY = 330;
-  const footerY  = 440;
+  const DIVIDER_Y = 330;
+  const FOOTER_Y  = 440;
+  const BADGE_X   = 680;
+  const BADGE_W   = 176;
+  const BADGE_H   = 72;
+  const BADGE_Y   = 22;
+  const BADGE_R   = 10;
+
   const svg = Buffer.from(
-    `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">` +
-    `<rect x="0" y="0" width="4" height="500" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
-    `<rect x="48" y="162" width="60" height="2" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.8"/>` +
-    `<rect x="48" y="${dividerY}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.25"/>` +
-    `<rect x="48" y="${footerY}" width="804" height="1" fill="rgba(255,255,255,0.1)"/>` +
-    `<text x="48"  y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">INVESTED</text>` +
-    `<text x="300" y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">PAYOUT</text>` +
-    `<text x="530" y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">PNL</text>` +
+    `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
+    `<rect x="0" y="0" width="4" height="${H}" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
+    `<defs>` +
+      `<linearGradient id="tl" x1="0" y1="0" x2="1" y2="0">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="1"/>` +
+        `<stop offset="60%"  stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.15"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</linearGradient>` +
+    `</defs>` +
+    `<rect x="0" y="0" width="${W}" height="2" fill="url(#tl)"/>` +
+    `<rect x="48" y="168" width="50" height="2" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75"/>` +
+    `<rect x="48" y="${DIVIDER_Y}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.25"/>` +
+    `<rect x="48" y="${FOOTER_Y}" width="804" height="1" fill="rgba(255,255,255,0.08)"/>` +
+    `<text x="48"  y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">INVESTED</text>` +
+    `<text x="300" y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">PAYOUT</text>` +
+    `<text x="530" y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">PNL</text>` +
+    `<rect x="${BADGE_X}" y="${BADGE_Y}" width="${BADGE_W}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}" fill="rgba(8,14,28,0.72)" stroke="rgb(${pc.r},${pc.g},${pc.b})" stroke-width="1.2"/>` +
+    `<text x="${BADGE_X + BADGE_W/2}" y="${BADGE_Y + BADGE_H - 10}" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="10" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="1.5">MULTIPLIER</text>` +
     `</svg>`
   );
 
-  // Text buffers
-  const tAtlas = await makeText("ATLAS | SOLANA",                            10, false, pc,     200, 20);
-  const tToken = await makeText(input.mintShort,                             28, true,  white,  620, 44);
+  const tAtlas = await makeText("ATLAS | SOLANA",                            10, false, pc,     200, 18);
+  const tToken = await makeText(input.mintShort,                             26, true,  white,  580, 42);
   const tHeld  = await makeText("Held for " + input.heldFor,                 13, false, muted,  300, 24);
-  const tPnl   = await makeText(pnlPctText,                                  130, true, pc,     720, 160);
-  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           22, true,  white,  220, 36);
-  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          22, true,  pc,     220, 36);
-  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  22, true,  pc,     240, 36);
-  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 220, 24);
-  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pc,     250, 24);
+  const tPnl   = await makeText(pnlPctText,                                 120, true,  pc,     700, 155);
+  const tMult  = await makeText(multiplier,                                  28, true,  pc,     140, 42);
+  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           21, true,  white,  210, 34);
+  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          21, true,  pc,     210, 34);
+  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  21, true,  pc,     230, 34);
+  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 220, 22);
+  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pc,     240, 22);
 
-  return sharp(bg).composite([
-    { input: svg,    top: 0,              left: 0   },
-    { input: tAtlas, top: 38,             left: 48  },
-    { input: tToken, top: 60,             left: 48  },
-    { input: tHeld,  top: 115,            left: 48  },
-    { input: tPnl,   top: 152,            left: 44  },
-    { input: tIV,    top: dividerY + 32,  left: 48  },
-    { input: tPV,    top: dividerY + 32,  left: 300 },
-    { input: tNV,    top: dividerY + 32,  left: 530 },
-    { input: tUser,  top: footerY + 16,   left: 48  },
-    { input: tWmark, top: footerY + 16,   left: 615 },
-  ]).png().toBuffer();
+  return sharp(bg)
+    .composite([
+      { input: svg,    top: 0,               left: 0   },
+      { input: tAtlas, top: 28,              left: 48  },
+      { input: tToken, top: 50,              left: 48  },
+      { input: tHeld,  top: 104,             left: 48  },
+      { input: tMult,  top: BADGE_Y + 10,    left: BADGE_X + Math.floor((BADGE_W - 140) / 2) },
+      { input: tPnl,   top: 160,             left: 40  },
+      { input: tIV,    top: DIVIDER_Y + 30,  left: 48  },
+      { input: tPV,    top: DIVIDER_Y + 30,  left: 300 },
+      { input: tNV,    top: DIVIDER_Y + 30,  left: 530 },
+      { input: tUser,  top: FOOTER_Y + 14,   left: 48  },
+      { input: tWmark, top: FOOTER_Y + 14,   left: 620 },
+    ])
+    .png()
+    .toBuffer();
 }
 
 /* =========================
