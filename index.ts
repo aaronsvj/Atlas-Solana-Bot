@@ -5541,18 +5541,25 @@ async function runSellLimitMonitor() {
           ).catch(() => {});
 
           console.log(`✅ Sell limit executed for user ${u.userId}: ${sig}`);
-        } catch (e) {
-          console.error(`Sell limit execution failed for user ${u.userId}:`, e);
+        } catch (e: any) {
+          const msg = e?.message ?? String(e);
+          const clean = msg.includes("0x1771") || msg.includes("insufficient funds")
+            ? "Insufficient SOL for fees"
+            : msg.includes("Simulation failed")
+            ? "Transaction simulation failed"
+            : msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
+          console.error(`Sell limit execution failed for user ${u.userId}: ${clean}`);
+          bot.telegram.sendMessage(u.userId, `⚠️ Sell limit failed: ${clean}`, { parse_mode: "Markdown" }).catch(() => {});
         }
       }
     }
   }
 }
 
-// Sell limit monitor disabled until paid RPC is available
-// setInterval(() => {
-//   runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
-// }, 300_000);
+// Sell limit monitor — runs every 5 minutes
+setInterval(() => {
+  runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
+}, 300_000);
 
 /* =========================
    ADMIN COMMANDS
