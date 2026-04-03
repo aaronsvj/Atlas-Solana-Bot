@@ -1991,49 +1991,67 @@ type PnlCardInput = {
 };
 
 async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
-  const fs = await import("fs");
   const path = await import("path");
-
   const pnlSign = input.pnlPct >= 0 ? "+" : "";
-  const pnlColor = input.pnlPct >= 0 ? "#1a8cff" : "#ff4444";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
-
-  const fontPath = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
-  const fontB64 = fs.readFileSync(fontPath).toString("base64");
-  const fontRegPath = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
-  const fontRegB64 = fs.readFileSync(fontRegPath).toString("base64");
+  const fontFile = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
+  const fontBold = path.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
   const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const pc = input.pnlPct >= 0 ? { r:26,g:140,b:255 } : { r:255,g:68,b:68 };
 
-  const svg = `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <style>
-        @font-face { font-family: 'DVS'; src: url('data:font/truetype;base64,${fontRegB64}'); font-weight: normal; }
-        @font-face { font-family: 'DVS'; src: url('data:font/truetype;base64,${fontB64}'); font-weight: bold; }
-      </style>
-    </defs>
-    <rect width="900" height="500" fill="#080c14"/>
-    <ellipse cx="820" cy="80" rx="220" ry="160" fill="#ffffff" opacity="0.04"/>
-    <ellipse cx="750" cy="420" rx="180" ry="120" fill="#ffffff" opacity="0.03"/>
-    <rect x="0" y="0" width="5" height="500" fill="${pnlColor}"/>
-    <text x="48" y="68" font-family="DVS" font-size="13" fill="${pnlColor}" font-weight="bold">${esc("ATLAS | SOLANA")}</text>
-    <text x="48" y="112" font-family="DVS" font-size="36" fill="#ffffff" font-weight="bold">${esc(input.mintShort)}</text>
-    <text x="48" y="144" font-family="DVS" font-size="14" fill="#64748b">Held for ${esc(input.heldFor)}</text>
-    <rect x="48" y="162" width="80" height="2" fill="${pnlColor}" opacity="0.6"/>
-    <text x="44" y="298" font-family="DVS" font-size="148" fill="${pnlColor}" font-weight="bold">${esc(pnlPctText)}</text>
-    <rect x="48" y="322" width="600" height="1" fill="#ffffff" opacity="0.08"/>
-    <text x="48" y="354" font-family="DVS" font-size="10" fill="#64748b">INVESTED</text>
-    <text x="48" y="388" font-family="DVS" font-size="27" fill="#ffffff" font-weight="bold">${input.costSol.toFixed(4)} SOL</text>
-    <text x="272" y="354" font-family="DVS" font-size="10" fill="#64748b">PAYOUT</text>
-    <text x="272" y="388" font-family="DVS" font-size="27" fill="${pnlColor}" font-weight="bold">${input.valueSol.toFixed(4)} SOL</text>
-    <text x="496" y="354" font-family="DVS" font-size="10" fill="#64748b">PNL</text>
-    <text x="496" y="388" font-family="DVS" font-size="27" fill="${pnlColor}" font-weight="bold">${pnlSign}${input.pnlSol.toFixed(4)} SOL</text>
-    <rect x="0" y="448" width="900" height="52" fill="#0d1420"/>
-    <text x="48" y="480" font-family="DVS" font-size="14" fill="#94a3b8">@${esc(input.username)}</text>
-    <text x="852" y="480" font-family="DVS" font-size="13" fill="${pnlColor}" text-anchor="end" font-weight="bold">@AtlasSolanaTrading</text>
-  </svg>`;
+  async function makeText(text: string, size: number, bold: boolean, color: {r:number,g:number,b:number}, maxW: number, maxH: number): Promise<Buffer> {
+    return sharp({
+      text: {
+        text: bold ? `<b>${esc(text)}</b>` : esc(text),
+        fontfile: bold ? fontBold : fontFile,
+        font: "DejaVu Sans",
+        fontSize: size,
+        rgba: true,
+        width: maxW,
+        height: maxH,
+      }
+    } as any).negate({ alpha: false }).tint(color).png().toBuffer();
+  }
 
-  return await sharp(Buffer.from(svg)).png().toBuffer();
+  const W = 900, H = 500;
+  const bg     = await sharp({ create: { width:W, height:H, channels:4, background:{r:8,g:12,b:20,alpha:1} }}).png().toBuffer();
+  const accent = await sharp({ create: { width:5, height:H, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
+  const bot    = await sharp({ create: { width:W, height:52, channels:4, background:{r:13,g:20,b:32,alpha:1} }}).png().toBuffer();
+  const sep    = await sharp({ create: { width:600, height:1, channels:4, background:{r:255,g:255,b:255,alpha:0.1} }}).png().toBuffer();
+  const bar    = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
+
+  const tBrand = await makeText("ATLAS | SOLANA",                      12,  true,  pc,                   260, 28);
+  const tToken = await makeText(input.mintShort,                       30,  true,  {r:255,g:255,b:255},  620, 48);
+  const tHeld  = await makeText("Held for "+input.heldFor,             13,  false, {r:100,g:116,b:139},  300, 26);
+  const tPnl   = await makeText(pnlPctText,                            130, true,  pc,                   720, 165);
+  const tIL    = await makeText("INVESTED",                            10,  false, {r:100,g:116,b:139},  140, 20);
+  const tIV    = await makeText(input.costSol.toFixed(4)+" SOL",       24,  true,  {r:255,g:255,b:255},  220, 38);
+  const tPL    = await makeText("PAYOUT",                              10,  false, {r:100,g:116,b:139},  140, 20);
+  const tPV    = await makeText(input.valueSol.toFixed(4)+" SOL",      24,  true,  pc,                   220, 38);
+  const tNL    = await makeText("PNL",                                 10,  false, {r:100,g:116,b:139},  100, 20);
+  const tNV    = await makeText(pnlSign+input.pnlSol.toFixed(4)+" SOL",24,  true,  pc,                   240, 38);
+  const tUser  = await makeText("@"+input.username,                    13,  false, {r:148,g:163,b:184},  220, 26);
+  const tWmark = await makeText("@AtlasSolanaTrading",                 12,  true,  pc,                   250, 26);
+
+  return sharp(bg).composite([
+    { input: accent, top:0,   left:0   },
+    { input: bot,    top:448, left:0   },
+    { input: sep,    top:322, left:48  },
+    { input: bar,    top:162, left:48  },
+    { input: tBrand, top:48,  left:48  },
+    { input: tToken, top:78,  left:48  },
+    { input: tHeld,  top:128, left:48  },
+    { input: tPnl,   top:152, left:44  },
+    { input: tIL,    top:334, left:48  },
+    { input: tIV,    top:352, left:48  },
+    { input: tPL,    top:334, left:272 },
+    { input: tPV,    top:352, left:272 },
+    { input: tNL,    top:334, left:496 },
+    { input: tNV,    top:352, left:496 },
+    { input: tUser,  top:460, left:48  },
+    { input: tWmark, top:460, left:615 },
+  ]).png().toBuffer();
 }
 
 /* =========================
