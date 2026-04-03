@@ -2020,9 +2020,14 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  // Load static background (baked in Canva — includes bg, bubbles, accent bar, bottom bar, labels)
+  // Load static background if available, otherwise generate one
+  const fs = await import("fs");
   const bgPath = path.join(process.cwd(), "pnl_bg.png");
-  const bg = await sharp(bgPath).png().toBuffer();
+  const bg = fs.existsSync(bgPath)
+    ? await sharp(bgPath).png().toBuffer()
+    : await sharp({ create: { width:900, height:500, channels:4, background:{r:8,g:12,b:20,alpha:1} }})
+        .composite([{ input: Buffer.from(`<svg width="900" height="500"><ellipse cx="820" cy="80" rx="220" ry="160" fill="white" opacity="0.04"/><ellipse cx="750" cy="420" rx="180" ry="120" fill="white" opacity="0.03"/></svg>`), top:0, left:0 }])
+        .png().toBuffer();
 
   const accent = await sharp({ create: { width:5, height:500, channels:4, background:{...pc,alpha:1} }}).png().toBuffer();
   const bar    = await sharp({ create: { width:80, height:2, channels:4, background:{...pc,alpha:0.7} }}).png().toBuffer();
