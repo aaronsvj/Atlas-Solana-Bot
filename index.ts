@@ -2001,20 +2001,10 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
 
   async function makeText(text: string, size: number, bold: boolean, color: {r:number,g:number,b:number}, maxW: number, maxH: number): Promise<Buffer> {
     const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const pango = bold
-      ? `<span foreground="rgb(${color.r},${color.g},${color.b})"><b>${esc2(text)}</b></span>`
-      : `<span foreground="rgb(${color.r},${color.g},${color.b})">${esc2(text)}</span>`;
+    const pango = bold ? `<b>${esc2(text)}</b>` : esc2(text);
     return sharp({
-      text: {
-        text: pango,
-        fontfile: bold ? fontBold : fontFile,
-        font: "DejaVu Sans",
-        fontSize: size,
-        rgba: true,
-        width: maxW,
-        height: maxH,
-      }
-    } as any).png().toBuffer();
+      text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH }
+    } as any).negate({ alpha: false }).tint(color).png().toBuffer();
   }
 
   const W = 900, H = 500;
@@ -2927,15 +2917,39 @@ bot.action("BUY_MAX_LIQ", async (ctx) => {
 bot.action("MENU_BUY", async (ctx) => {
   await ctx.answerCbQuery();
   const userId = ctx.from!.id;
-
   const u = getUser(userId);
   if (u.wallets.length === 0) {
     await ctx.reply("Tap Wallet first to create your trading wallet.", { ...bonkMainMenu() });
     return;
   }
 
-  setFlow(userId, "AWAIT_BUY_CA");
-  await ctx.reply("Please paste the CA");
+  const def = getDefaultWallet(userId);
+  const positions = (u.positions || []).filter((p: any) => def && p.wallet === def.name);
+
+  const rows: any[] = [
+    [Markup.button.callback("🔍 Paste new CA", "BUY_NEW_CA")],
+  ];
+  positions.forEach((p: any) => {
+    rows.push([Markup.button.callback(`📊 ${p.mint.slice(0,8)}...`, `BUY_EXISTING_${p.mint}`)]);
+  });
+  rows.push([Markup.button.callback("↩️ Return", "BACK_HOME")]);
+
+  try {
+    await ctx.editMessageText(
+      `🟢 *Buy*\n\nPaste a new CA or trade an existing position:`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard(rows) }
+    );
+  } catch {
+    await ctx.reply(`🟢 *Buy*\n\nPaste a new CA or trade an existing position:`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard(rows) }
+    );
+  }
+});
+
+bot.action("BUY_NEW_CA", async (ctx) => {
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_BUY_CA");
+  await ctx.reply("Please paste the CA:");
 });
 
 bot.action("MENU_LIMIT_ORDERS", async (ctx) => {
@@ -4554,6 +4568,15 @@ const pendingExport = new Map<number, string>();
 bot.on("callback_query", async (ctx) => {
   const data = (ctx.callbackQuery as any)?.data as string | undefined;
   if (!data) return;
+
+  if (data.startsWith("BUY_EXISTING_")) {
+    await ctx.answerCbQuery();
+    const mint = data.replace("BUY_EXISTING_", "");
+    activeBuyMint.set(ctx.from!.id, mint);
+    activeSellMint.set(ctx.from!.id, mint);
+    await showBuyTokenMenu(ctx, ctx.from!.id);
+    return;
+  }
 
   if (data.startsWith("W_SET_DEFAULT_")) {
     await ctx.answerCbQuery();
