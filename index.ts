@@ -81,6 +81,20 @@ function removeFromBlacklist(mint: string): void {
 function isBlacklisted(mint: string): boolean { return getBlacklist().has(mint); }
 
 /* =========================
+   PARTNER MANAGEMENT
+========================= */
+function getPartners(): Set<number> {
+  try { const db = loadDB() as any; return new Set(db.partners ?? []); } catch { return new Set(); }
+}
+function addPartner(userId: number): void {
+  try { const db = loadDB() as any; if (!db.partners) db.partners = []; if (!db.partners.includes(userId)) { db.partners.push(userId); saveDB(db); } } catch {}
+}
+function removePartner(userId: number): void {
+  try { const db = loadDB() as any; if (!db.partners) return; db.partners = db.partners.filter((id: number) => id !== userId); saveDB(db); } catch {}
+}
+function isPartner(userId: number): boolean { return getPartners().has(userId); }
+
+/* =========================
    FEE COLLECTION — Jupiter Platform Fee + Accumulator Wallet
 ========================= */
 
@@ -105,9 +119,12 @@ async function creditReferrerFee(userId: number, feeSol: number): Promise<void> 
     const referrer = getUserByReferralCode(u.referredBy);
     if (!referrer) return;
 
-    // Only credit within first 30 days
-    const userCreatedAt = new Date(u.createdAt).getTime();
-    if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
+    // Partners earn 20% forever, regular referrers earn 20% for 30 days only
+    const isReferrerPartner = isPartner(referrer.userId);
+    if (!isReferrerPartner) {
+      const userCreatedAt = new Date(u.createdAt).getTime();
+      if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
+    }
 
     const referrerShare = feeSol * 0.20;
     const referrerShareLamports = Math.floor(referrerShare * LAMPORTS_PER_SOL);
@@ -5636,7 +5653,26 @@ Failed: *${failed}*`, { parse_mode: "Markdown" });
     return;
   }
 
-  await ctx.reply("🔧 *Admin Commands*\n\n/admin balance — fee wallet balance\n/admin withdraw <addr> <amt> — withdraw\n/admin stats — bot stats\n/admin broadcast <msg> — message all users\n/admin blacklist add/remove/list — token blacklist", { parse_mode: "Markdown" });
+  if (cmd === "partner") {
+    const subcmd = args[1];
+    const partnerIdArg = parseInt(args[2]);
+    if (subcmd === "add" && partnerIdArg) {
+      addPartner(partnerIdArg);
+      await ctx.reply(`✅ Partner added: \`${partnerIdArg}\`\nThey now earn *20% forever* on all referral trades.`, { parse_mode: "Markdown" });
+    } else if (subcmd === "remove" && partnerIdArg) {
+      removePartner(partnerIdArg);
+      await ctx.reply(`✅ Partner removed: \`${partnerIdArg}\`\nBack to standard 20% / 30 days.`, { parse_mode: "Markdown" });
+    } else if (subcmd === "list") {
+      const list = [...getPartners()];
+      const listText = list.length ? "🤝 *Partners:*\n\n" + list.map(id => `\`${id}\``).join("\n") : "🤝 No partners yet.";
+      await ctx.reply(listText, { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply("/admin partner add <userId>\n/admin partner remove <userId>\n/admin partner list");
+    }
+    return;
+  }
+
+  await ctx.reply("🔧 *Admin Commands*\n\n/admin balance — fee wallet balance\n/admin withdraw <addr> <amt> — withdraw\n/admin stats — bot stats\n/admin broadcast <msg> — message all users\n/admin blacklist add/remove/list — token blacklist\n/admin partner add/remove/list <userId> — manage partners", { parse_mode: "Markdown" });
 });
 
 bot.command("refstats", async (ctx) => {
