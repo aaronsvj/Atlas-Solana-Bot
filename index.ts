@@ -5657,17 +5657,58 @@ Failed: *${failed}*`, { parse_mode: "Markdown" });
     const subcmd = args[1];
     const partnerIdArg = parseInt(args[2]);
     if (subcmd === "add" && partnerIdArg) {
+      // Check if user exists in db
+      const db = loadDB();
+      const partnerUser = db.users[String(partnerIdArg)];
+      if (!partnerUser) {
+        await ctx.reply(`❌ User \`${partnerIdArg}\` not found in database. They need to have started the bot first.`, { parse_mode: "Markdown" });
+        return;
+      }
       addPartner(partnerIdArg);
-      await ctx.reply(`✅ Partner added: \`${partnerIdArg}\`\nThey now earn *20% forever* on all referral trades.`, { parse_mode: "Markdown" });
+      await ctx.reply(
+        `✅ *Partner Added*\n\n` +
+        `User ID: \`${partnerIdArg}\`\n` +
+        `Referral code: \`${partnerUser.referralCode}\`\n\n` +
+        `They now earn *20% forever* on all referral trades.\n\n` +
+        `To remove: /admin partner remove ${partnerIdArg}`,
+        { parse_mode: "Markdown" }
+      );
     } else if (subcmd === "remove" && partnerIdArg) {
+      if (!isPartner(partnerIdArg)) {
+        await ctx.reply(`❌ User \`${partnerIdArg}\` is not a partner.`, { parse_mode: "Markdown" });
+        return;
+      }
       removePartner(partnerIdArg);
-      await ctx.reply(`✅ Partner removed: \`${partnerIdArg}\`\nBack to standard 20% / 30 days.`, { parse_mode: "Markdown" });
+      await ctx.reply(
+        `✅ *Partner Removed*\n\n` +
+        `User ID: \`${partnerIdArg}\`\n\n` +
+        `They are now on standard 20% / 30 days.`,
+        { parse_mode: "Markdown" }
+      );
     } else if (subcmd === "list") {
       const list = [...getPartners()];
-      const listText = list.length ? "🤝 *Partners:*\n\n" + list.map(id => `\`${id}\``).join("\n") : "🤝 No partners yet.";
-      await ctx.reply(listText, { parse_mode: "Markdown" });
+      if (!list.length) {
+        await ctx.reply("🤝 No partners yet.\n\nAdd one with: /admin partner add <userId>");
+        return;
+      }
+      const db = loadDB();
+      const lines = list.map(id => {
+        const u = db.users[String(id)] as any;
+        const code = u?.referralCode ?? "unknown";
+        return `• \`${id}\` — ref code: \`${code}\``;
+      }).join("\n");
+      await ctx.reply(
+        `🤝 *Partners (${list.length})*\n\n${lines}\n\nTo remove: /admin partner remove <userId>`,
+        { parse_mode: "Markdown" }
+      );
     } else {
-      await ctx.reply("/admin partner add <userId>\n/admin partner remove <userId>\n/admin partner list");
+      await ctx.reply(
+        `🤝 *Partner Commands*\n\n` +
+        `/admin partner add <userId> — add partner (20% forever)\n` +
+        `/admin partner remove <userId> — remove partner\n` +
+        `/admin partner list — view all partners`,
+        { parse_mode: "Markdown" }
+      );
     }
     return;
   }
