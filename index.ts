@@ -230,7 +230,7 @@ async function collectFee(
    DB
 ========================= */
 
-const DB_PATH = path.join(process.cwd(), "db.json");
+const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), "db.json");
 
 type WalletRecord = {
   id: string;
