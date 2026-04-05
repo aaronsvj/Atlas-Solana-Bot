@@ -148,5 +148,43 @@ export function createDashboardRouter(connection: Connection, bot: any): Router 
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // GET /api/partners
+  router.get("/partners", (req: Request, res: Response) => {
+    try {
+      const db = loadDB() as any;
+      const partnerIds: number[] = db.partners ?? [];
+      const partners = partnerIds.map(id => {
+        const u = db.users[String(id)] as any;
+        if (!u) return null;
+        const totalReferrals = Object.values(db.users).filter((x: any) => x.referredBy === u.referralCode).length;
+        return {
+          userId: id,
+          referralCode: u.referralCode ?? "",
+          lifetimeSolEarned: u.referrals?.lifetimeSolEarned ?? 0,
+          totalReferrals,
+        };
+      }).filter(Boolean);
+      res.json({ partners });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // POST /api/partners  body: { action: "add"|"remove", userId: number }
+  router.post("/partners", (req: Request, res: Response) => {
+    try {
+      const { action, userId } = req.body;
+      if (!userId || !action) { res.status(400).json({ error: "action and userId required" }); return; }
+      const db = loadDB() as any;
+      if (!db.partners) db.partners = [];
+      if (action === "add") {
+        if (!db.users[String(userId)]) { res.status(404).json({ error: "User not found" }); return; }
+        if (!db.partners.includes(userId)) db.partners.push(userId);
+      } else if (action === "remove") {
+        db.partners = db.partners.filter((id: number) => id !== userId);
+      } else { res.status(400).json({ error: "action must be add or remove" }); return; }
+      saveDB(db);
+      res.json({ success: true, partners: db.partners });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   return router;
 }
