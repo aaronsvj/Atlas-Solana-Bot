@@ -1,0 +1,6 @@
+<svg width="2000" height="2000" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="200" height="200" rx="40" fill="#0d1425"/>
+  <line x1="148" y1="40" x2="62" y2="160" stroke="#1a8cff" stroke-width="14" stroke-linecap="round"/>
+  <line x1="114" y1="22" x2="28" y2="142" stroke="#1a8cff" stroke-width="14" stroke-linecap="round" opacity="0.45"/>
+  <text x="102" y="132" text-anchor="middle" font-family="Arial Black, sans-serif" font-weight="900" font-size="100" fill="#ffffff">A</text>
+</svg>

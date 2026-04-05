@@ -4524,7 +4524,7 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
         });
         await ctx.replyWithPhoto(
           { source: png },
-          { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
+          { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @AtlasSolanaTradeBot`, parse_mode: "Markdown" }
         );
       } catch (pnlErr: any) {
         console.error("PnL card failed:", pnlErr);
@@ -4837,7 +4837,7 @@ bot.on("callback_query", async (ctx) => {
 
           await ctx.replyWithPhoto(
             { source: png },
-            { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
+            { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @AtlasSolanaTradeBot`, parse_mode: "Markdown" }
           );
         } catch (pnlErr: any) {
           console.error("PnL card generation failed:", pnlErr);
