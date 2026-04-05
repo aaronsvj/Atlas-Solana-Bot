@@ -11,11 +11,19 @@ const FEE_ACCUMULATOR_SECRET = process.env.FEE_ACCUMULATOR_SECRET ?? "";
 
 function loadDB() {
   try {
-    if (!fs.existsSync(DB_PATH)) return { users: {} };
+    console.log(`📂 dashboard-api reading DB from: ${DB_PATH}`);
+    if (!fs.existsSync(DB_PATH)) {
+      console.log(`❌ DB file not found at: ${DB_PATH}`);
+      return { users: {} };
+    }
     const raw = fs.readFileSync(DB_PATH, "utf8");
     const parsed = JSON.parse(raw);
+    console.log(`✅ DB loaded, users: ${Object.keys(parsed.users ?? {}).length}`);
     return parsed?.users ? parsed : { users: {} };
-  } catch { return { users: {} }; }
+  } catch (e) {
+    console.log(`❌ DB load error: ${e}`);
+    return { users: {} };
+  }
 }
 
 function saveDB(db: any) {
