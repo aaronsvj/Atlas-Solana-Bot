@@ -2022,8 +2022,8 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
   // Profit = vibrant green, Loss = vivid red
-  const pc     = isProfit ? { r: 0, g: 255, b: 135 } : { r: 255, g: 59, b: 59 };
-  const pcDim  = isProfit ? { r: 0, g: 200, b: 100 } : { r: 200, g: 40, b: 40 };
+  const pc     = isProfit ? { r: 26, g: 140, b: 255 } : { r: 255, g: 59, b: 59 };
+  const pcDim  = isProfit ? { r: 20, g: 100, b: 200 } : { r: 200, g: 40, b: 40 };
   const white  = { r: 255, g: 255, b: 255 };
   const silver = { r: 200, g: 210, b: 220 };
   const muted  = { r: 120, g: 135, b: 155 };
@@ -2060,13 +2060,14 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const BADGE_R   = 14;
 
   // Build rich SVG background — dark navy with glowing orbs and colour wash
-  // Load pnl_bg.png as the background
+  // Use pnl_bg.png as background
   const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
   const bg = fsMod.existsSync(bgPath)
     ? await sharp(bgPath).resize(W, H).png().toBuffer()
     : await sharp({ create: { width: W, height: H, channels: 4, background: { r: 6, g: 12, b: 26, alpha: 1 } } }).png().toBuffer();
 
   // Text elements — bigger token name, crisper labels
+  const tAtlas = await makeText("ATLAS | SOLANA",                            11, true,  pc,     220, 20);
   const tToken = await makeText(input.mintShort,                             34, true,  white,  600, 52);
   const tHeld  = await makeText("Held for " + input.heldFor,                 14, false, muted,  320, 26);
   const tPnl   = await makeText(pnlPctText,                                 118, true,  pc,     700, 150);
@@ -2079,6 +2080,7 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
 
   return sharp(bg)
     .composite([
+      { input: tAtlas, top: 26,              left: 48  },
       { input: tToken, top: 48,              left: 48  },
       { input: tHeld,  top: 108,             left: 48  },
       { input: tMult,  top: BADGE_Y + 12,    left: BADGE_X + Math.floor((BADGE_W - 160) / 2) },
