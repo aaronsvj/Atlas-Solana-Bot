@@ -2022,8 +2022,8 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
   // Profit = vibrant green, Loss = vivid red
-  const pc     = isProfit ? { r: 26, g: 140, b: 255 } : { r: 255, g: 59, b: 59 };
-  const pcDim  = isProfit ? { r: 20, g: 100, b: 200 } : { r: 200, g: 40, b: 40 };
+  const pc     = isProfit ? { r: 0, g: 255, b: 135 } : { r: 255, g: 59, b: 59 };
+  const pcDim  = isProfit ? { r: 0, g: 200, b: 100 } : { r: 200, g: 40, b: 40 };
   const white  = { r: 255, g: 255, b: 255 };
   const silver = { r: 200, g: 210, b: 220 };
   const muted  = { r: 120, g: 135, b: 155 };
@@ -2051,45 +2051,94 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  const DIVIDER_Y = 340;
-  const FOOTER_Y  = 450;
-  const BADGE_X   = 668;
-  const BADGE_W   = 200;
-  const BADGE_H   = 80;
-  const BADGE_Y   = 18;
-  const BADGE_R   = 14;
+  const DIVIDER_Y = 350;
+  const FOOTER_Y  = 455;
+  const BADGE_X   = 680;
+  const BADGE_W   = 188;
+  const BADGE_H   = 72;
+  const BADGE_Y   = 20;
+  const BADGE_R   = 12;
 
   // Build rich SVG background — dark navy with glowing orbs and colour wash
-  // Use pnl_bg.png as background
-  const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
-  const bg = fsMod.existsSync(bgPath)
-    ? await sharp(bgPath).resize(W, H).png().toBuffer()
-    : await sharp({ create: { width: W, height: H, channels: 4, background: { r: 6, g: 12, b: 26, alpha: 1 } } }).png().toBuffer();
+  const bgSvg = Buffer.from(
+    `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
+    `<defs>` +
+      // Dark gradient base
+      `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">` +
+        `<stop offset="0%"   stop-color="#060914"/>` +
+        `<stop offset="100%" stop-color="#0d1525"/>` +
+      `</linearGradient>` +
+      // Colour glow top-right
+      `<radialGradient id="glow1" cx="85%" cy="10%" r="55%">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.18"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</radialGradient>` +
+      // Subtle second glow bottom-left
+      `<radialGradient id="glow2" cx="10%" cy="90%" r="40%">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.10"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</radialGradient>` +
+      // Top line gradient
+      `<linearGradient id="tl" x1="0" y1="0" x2="1" y2="0">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="1"/>` +
+        `<stop offset="70%"  stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.2"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</linearGradient>` +
+    `</defs>` +
+    // Base background
+    `<rect width="${W}" height="${H}" fill="url(#bg)"/>` +
+    // Glow washes
+    `<rect width="${W}" height="${H}" fill="url(#glow1)"/>` +
+    `<rect width="${W}" height="${H}" fill="url(#glow2)"/>` +
+    // Decorative circles top-right
+    `<circle cx="820" cy="60"  r="180" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.04"/>` +
+    `<circle cx="820" cy="60"  r="120" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.04"/>` +
+    `<circle cx="820" cy="460" r="140" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.03"/>` +
+    // Left accent bar — thicker, brighter
+    `<rect x="0" y="0" width="5" height="${H}" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
+    // Top accent line
+    `<rect x="0" y="0" width="${W}" height="3" fill="url(#tl)"/>` +
+    // Underline below token name
+    `<rect x="48" y="178" width="60" height="3" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.9" rx="2"/>` +
+    // Divider lines
+    `<rect x="48" y="${DIVIDER_Y}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.20"/>` +
+    `<rect x="48" y="${FOOTER_Y}" width="804" height="1" fill="rgba(255,255,255,0.06)"/>` +
+    // Column labels with letter-spacing
+    `<text x="48"  y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">INVESTED</text>` +
+    `<text x="310" y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">PAYOUT</text>` +
+    `<text x="560" y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">PNL</text>` +
+    // Multiplier badge — glassy dark with coloured border + inner glow
+    `<rect x="${BADGE_X}" y="${BADGE_Y}" width="${BADGE_W}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}" fill="rgba(6,10,22,0.82)" stroke="rgb(${pc.r},${pc.g},${pc.b})" stroke-width="1.5"/>` +
+    `<rect x="${BADGE_X+2}" y="${BADGE_Y+2}" width="${BADGE_W-4}" height="${BADGE_H-4}" rx="${BADGE_R-2}" ry="${BADGE_R-2}" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.06"/>` +
+    `<text x="${BADGE_X + BADGE_W/2}" y="${BADGE_Y + BADGE_H - 12}" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="10" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.6" letter-spacing="2">MULTIPLIER</text>` +
+    `</svg>`
+  );
+
+  const bg = await sharp(bgSvg).png().toBuffer();
 
   // Text elements — bigger token name, crisper labels
-  const tAtlas = await makeText("ATLAS | SOLANA",                            11, true,  pc,     220, 20);
-  const tToken = await makeText(input.mintShort,                             34, true,  white,  600, 52);
-  const tHeld  = await makeText("Held for " + input.heldFor,                 14, false, muted,  320, 26);
-  const tPnl   = await makeText(pnlPctText,                                 118, true,  pc,     700, 150);
-  const tMult  = await makeText(multiplier,                                  30, true,  pc,     160, 46);
-  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           22, true,  silver, 220, 36);
-  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          22, true,  pc,     220, 36);
-  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  22, true,  pc,     240, 36);
-  const tUser  = await makeText("@" + input.username,                        13, false, muted2, 240, 24);
-  const tWmark = await makeText("@AtlasSolanaTrading",                       12, true,  pcDim,  260, 24);
+  // No tAtlas — badge is baked into pnl_bg.png
+  const tToken = await makeText(input.mintShort,                             32, true,  white,  580, 48);
+  const tHeld  = await makeText("Held for " + input.heldFor,                 13, false, muted,  300, 24);
+  const tPnl   = await makeText(pnlPctText,                                 115, true,  pc,     660, 145);
+  const tMult  = await makeText(multiplier,                                  28, true,  pc,     150, 42);
+  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           20, true,  silver, 210, 32);
+  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          20, true,  pc,     210, 32);
+  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  20, true,  pc,     230, 32);
+  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 230, 22);
+  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pcDim,  250, 22);
 
   return sharp(bg)
     .composite([
-      { input: tAtlas, top: 26,              left: 48  },
-      { input: tToken, top: 48,              left: 48  },
-      { input: tHeld,  top: 108,             left: 48  },
-      { input: tMult,  top: BADGE_Y + 12,    left: BADGE_X + Math.floor((BADGE_W - 160) / 2) },
-      { input: tPnl,   top: 158,             left: 38  },
-      { input: tIV,    top: DIVIDER_Y + 32,  left: 48  },
-      { input: tPV,    top: DIVIDER_Y + 32,  left: 310 },
-      { input: tNV,    top: DIVIDER_Y + 32,  left: 560 },
-      { input: tUser,  top: FOOTER_Y + 16,   left: 48  },
-      { input: tWmark, top: FOOTER_Y + 16,   left: 610 },
+      { input: tToken, top: 72,              left: 22  },  // below badge in bg
+      { input: tHeld,  top: 126,             left: 22  },
+      { input: tPnl,   top: 158,             left: 14  },
+      { input: tMult,  top: BADGE_Y + 14,    left: BADGE_X + Math.floor((BADGE_W - 150) / 2) },
+      { input: tIV,    top: DIVIDER_Y + 30,  left: 22  },
+      { input: tPV,    top: DIVIDER_Y + 30,  left: 290 },
+      { input: tNV,    top: DIVIDER_Y + 30,  left: 540 },
+      { input: tUser,  top: FOOTER_Y + 14,   left: 22  },
+      { input: tWmark, top: FOOTER_Y + 14,   left: 608 },
     ])
     .png()
     .toBuffer();
