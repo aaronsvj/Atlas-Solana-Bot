@@ -156,7 +156,7 @@ async function creditReferrerFee(userId: number, feeSol: number): Promise<void> 
 
     // Update referrer stats
     referrer.referrals.lifetimeSolEarned += referrerShare;
-    referrer.referrals.telegramReferrals = (referrer.referrals.telegramReferrals || 0);
+    referrer.referrals.telegramReferrals = (referrer.referrals.telegramReferrals || 0) + 1;
     setUser(referrer);
 
     console.log(`🎁 Referral payout: ${referrerShare.toFixed(6)} SOL → user ${referrer.userId} | tx: ${sig}`);
