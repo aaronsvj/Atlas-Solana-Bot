@@ -2081,8 +2081,8 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
 
   return sharp(bg)
     .composite([
-      { input: tToken, top: 72,              left: 22  },  // below badge in bg
-      { input: tHeld,  top: 126,             left: 22  },
+      { input: tToken, top: 87,              left: 22  },  // below badge in bg
+      { input: tHeld,  top: 141,             left: 22  },
       { input: tPnl,   top: 228,             left: 14  },
       { input: tMult,  top: BADGE_Y + 14,    left: BADGE_X + Math.floor((BADGE_W - 150) / 2) },
       { input: tIV,    top: DIVIDER_Y + 30,  left: 22  },
