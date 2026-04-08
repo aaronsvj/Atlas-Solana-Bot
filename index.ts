@@ -5107,6 +5107,18 @@ bot.on("text", async (ctx, next) => {
     return;
   }
 
+  // Auto-detect CA paste from anywhere
+  if (flow === "NONE" && txt.length >= 32 && txt.length <= 44 && !txt.includes(" ")) {
+    try {
+      const mint = new PublicKey(txt);
+      activeBuyMint.set(userId, mint.toBase58());
+      await showBuyTokenMenu(ctx, userId);
+      return;
+    } catch {
+      // Not a valid public key, fall through to normal handling
+    }
+  }
+
   const u = getUser(userId);
 
   if (flow === "AWAIT_COPYTRADE_WALLET") {
