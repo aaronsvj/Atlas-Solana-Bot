@@ -913,11 +913,6 @@ async function getTokenHolding(owner: PublicKey, mint: PublicKey): Promise<Token
 ========================= */
 
 const activeBuyMint = new Map<number, string>();
-const activeRefreshIntervals = new Map<number, ReturnType<typeof setInterval>>();
-function clearUserRefresh(userId: number) {
-  const existing = activeRefreshIntervals.get(userId);
-  if (existing) { clearInterval(existing); activeRefreshIntervals.delete(userId); }
-}
 const sendSolAddress = new Map<number, string>();
 const buyLimitDrafts = new Map<number, BuyLimitDraft>();
 const walletReorderMode = new Map<number, boolean>();
@@ -976,19 +971,18 @@ async function fetchTokenInfo(mint: string): Promise<TokenInfo | null> {
     const pairs: any[] = json?.pairs ?? [];
     if (!pairs.length) return null;
 
-    // Prefer pairs where our token is the BASE so priceNative = SOL per token (not inverted)
-    const mintLower = mint.toLowerCase();
-    const basePairs = pairs.filter((p: any) => p.baseToken?.address?.toLowerCase() === mintLower);
-    const pool = (basePairs.length > 0 ? basePairs : pairs)
-      .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+    // Pick the pair with highest liquidity
+    const pair = pairs.sort((a: any, b: any) =>
+      (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0)
+    )[0];
 
     const data: TokenInfo = {
-      price:     parseFloat(pool.priceUsd ?? "0"),
-      priceSOL:  parseFloat(pool.priceNative ?? "0"),
-      mc:        pool.fdv ?? pool.marketCap ?? 0,
-      liquidity: pool.liquidity?.usd ?? 0,
-      symbol:    pool.baseToken?.symbol ?? "???",
-      name:      pool.baseToken?.name ?? "Unknown",
+      price:     parseFloat(pair.priceUsd ?? "0"),
+      priceSOL:  parseFloat(pair.priceNative ?? "0"),
+      mc:        pair.fdv ?? pair.marketCap ?? 0,
+      liquidity: pair.liquidity?.usd ?? 0,
+      symbol:    pair.baseToken?.symbol ?? "???",
+      name:      pair.baseToken?.name ?? "Unknown",
     };
 
     tokenInfoCache.set(mint, { data, ts: now });
@@ -1434,26 +1428,12 @@ return (
 async function buildBuyLimitText(userId: number) {
   const mint = activeBuyMint.get(userId);
   const draft = getBuyLimitDraft(userId);
-  const u = getUser(userId);
-  const savedOrders: any[] = ((u as any).buyLimits ?? []).filter((o: any) => !mint || o.mint === mint);
-
-  let ordersSection = "";
-  if (savedOrders.length === 0) {
-    ordersSection = `⚠️ You have no Buy Limits configured.\n\n`;
-  } else {
-    ordersSection = `📋 *Active Buy Limits (${savedOrders.length})*\n\n`;
-    savedOrders.forEach((o: any, i: number) => {
-      const triggerLabel = o.triggerType === "PRICE" ? `Price: ${o.triggerValue}` : `MC: $${Number(o.triggerValue).toLocaleString()}`;
-      ordersSection += `${i + 1}. ${triggerLabel} → Buy *${o.amountSol} SOL* | ${o.durationHours}h${o.multiBuy ? " | Multi" : ""}\n`;
-    });
-    ordersSection += "\n";
-  }
 
   return (
-    `${mint ? `${shortAddr(mint, 12, 8)}\n\`${mint}\`\n\n` : ""}` +
+    `${mint ? `${shortAddr(mint, 12, 8)}\n${mint}\n\n` : ""}` +
     `⚙️ *Buy Limit Orders*\n\n` +
-    ordersSection +
-    `*New Order Draft:*\n` +
+    `Set buy limit orders at a target price or market cap.\n\n` +
+    `⚠️ You have no Buy Limits configured.\n\n` +
     `Trigger: *${draft.triggerType === "PRICE" ? "Price" : "MC"}*\n` +
     `Amount: *${draft.amountSol} SOL*\n` +
     `Duration: *${draft.durationHours}h*\n`
@@ -2033,17 +2013,21 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const fsMod   = await import("fs");
 
   const W = 900, H = 500;
-  const pnlSign    = input.pnlPct >= 0 ? "+" : "";
+  const isProfit   = input.pnlPct >= 0;
+  const pnlSign    = isProfit ? "+" : "";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
   const multiplier = (input.valueSol / input.costSol).toFixed(2) + "x";
 
   const fontFile = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
   const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  const pc    = input.pnlPct >= 0 ? { r: 26,  g: 140, b: 255 } : { r: 255, g: 68,  b: 68  };
-  const white = { r: 255, g: 255, b: 255 };
-  const muted = { r: 100, g: 116, b: 139 };
-  const muted2= { r: 148, g: 163, b: 184 };
+  // Profit = vibrant green, Loss = vivid red
+  const pc     = isProfit ? { r: 0, g: 255, b: 135 } : { r: 255, g: 59, b: 59 };
+  const pcDim  = isProfit ? { r: 0, g: 200, b: 100 } : { r: 200, g: 40, b: 40 };
+  const white  = { r: 255, g: 255, b: 255 };
+  const silver = { r: 200, g: 210, b: 220 };
+  const muted  = { r: 120, g: 135, b: 155 };
+  const muted2 = { r: 160, g: 175, b: 195 };
 
   async function makeText(
     text: string, size: number, bold: boolean,
@@ -2067,73 +2051,95 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
-  const bg = fsMod.existsSync(bgPath)
-    ? await sharp(bgPath).resize(W, H).png().toBuffer()
-    : await sharp({ create: { width: W, height: H, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } } })
-        .composite([{ input: Buffer.from(
-          `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
-          `<rect width="${W}" height="${H}" fill="#0a0e1a"/>` +
-          `<circle cx="820" cy="80"  r="200" fill="#1a2a3a" opacity="0.6"/>` +
-          `<circle cx="820" cy="420" r="160" fill="#1a2a3a" opacity="0.5"/>` +
-          `</svg>`
-        ), top: 0, left: 0 }])
-        .png().toBuffer();
+  const DIVIDER_Y = 340;
+  const FOOTER_Y  = 450;
+  const BADGE_X   = 668;
+  const BADGE_W   = 200;
+  const BADGE_H   = 80;
+  const BADGE_Y   = 18;
+  const BADGE_R   = 14;
 
-  const DIVIDER_Y = 330;
-  const FOOTER_Y  = 440;
-  const BADGE_X   = 680;
-  const BADGE_W   = 176;
-  const BADGE_H   = 72;
-  const BADGE_Y   = 22;
-  const BADGE_R   = 10;
-
-  const svg = Buffer.from(
+  // Build rich SVG background — dark navy with glowing orbs and colour wash
+  const bgSvg = Buffer.from(
     `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
-    `<rect x="0" y="0" width="4" height="${H}" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
     `<defs>` +
+      // Dark gradient base
+      `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">` +
+        `<stop offset="0%"   stop-color="#060914"/>` +
+        `<stop offset="100%" stop-color="#0d1525"/>` +
+      `</linearGradient>` +
+      // Colour glow top-right
+      `<radialGradient id="glow1" cx="85%" cy="10%" r="55%">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.18"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</radialGradient>` +
+      // Subtle second glow bottom-left
+      `<radialGradient id="glow2" cx="10%" cy="90%" r="40%">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.10"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</radialGradient>` +
+      // Top line gradient
       `<linearGradient id="tl" x1="0" y1="0" x2="1" y2="0">` +
         `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="1"/>` +
-        `<stop offset="60%"  stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.15"/>` +
+        `<stop offset="70%"  stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.2"/>` +
         `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
       `</linearGradient>` +
     `</defs>` +
-    `<rect x="0" y="0" width="${W}" height="2" fill="url(#tl)"/>` +
-    `<rect x="48" y="168" width="50" height="2" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75"/>` +
-    `<rect x="48" y="${DIVIDER_Y}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.25"/>` +
-    `<rect x="48" y="${FOOTER_Y}" width="804" height="1" fill="rgba(255,255,255,0.08)"/>` +
-    `<text x="48"  y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">INVESTED</text>` +
-    `<text x="300" y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">PAYOUT</text>` +
-    `<text x="530" y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">PNL</text>` +
-    `<rect x="${BADGE_X}" y="${BADGE_Y}" width="${BADGE_W}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}" fill="rgba(8,14,28,0.72)" stroke="rgb(${pc.r},${pc.g},${pc.b})" stroke-width="1.2"/>` +
-    `<text x="${BADGE_X + BADGE_W/2}" y="${BADGE_Y + BADGE_H - 10}" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="10" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="1.5">MULTIPLIER</text>` +
+    // Base background
+    `<rect width="${W}" height="${H}" fill="url(#bg)"/>` +
+    // Glow washes
+    `<rect width="${W}" height="${H}" fill="url(#glow1)"/>` +
+    `<rect width="${W}" height="${H}" fill="url(#glow2)"/>` +
+    // Decorative circles top-right
+    `<circle cx="820" cy="60"  r="180" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.04"/>` +
+    `<circle cx="820" cy="60"  r="120" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.04"/>` +
+    `<circle cx="820" cy="460" r="140" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.03"/>` +
+    // Left accent bar — thicker, brighter
+    `<rect x="0" y="0" width="5" height="${H}" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
+    // Top accent line
+    `<rect x="0" y="0" width="${W}" height="3" fill="url(#tl)"/>` +
+    // Underline below token name
+    `<rect x="48" y="178" width="60" height="3" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.9" rx="2"/>` +
+    // Divider lines
+    `<rect x="48" y="${DIVIDER_Y}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.20"/>` +
+    `<rect x="48" y="${FOOTER_Y}" width="804" height="1" fill="rgba(255,255,255,0.06)"/>` +
+    // Column labels with letter-spacing
+    `<text x="48"  y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">INVESTED</text>` +
+    `<text x="310" y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">PAYOUT</text>` +
+    `<text x="560" y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">PNL</text>` +
+    // Multiplier badge — glassy dark with coloured border + inner glow
+    `<rect x="${BADGE_X}" y="${BADGE_Y}" width="${BADGE_W}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}" fill="rgba(6,10,22,0.82)" stroke="rgb(${pc.r},${pc.g},${pc.b})" stroke-width="1.5"/>` +
+    `<rect x="${BADGE_X+2}" y="${BADGE_Y+2}" width="${BADGE_W-4}" height="${BADGE_H-4}" rx="${BADGE_R-2}" ry="${BADGE_R-2}" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.06"/>` +
+    `<text x="${BADGE_X + BADGE_W/2}" y="${BADGE_Y + BADGE_H - 12}" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="10" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.6" letter-spacing="2">MULTIPLIER</text>` +
     `</svg>`
   );
 
-  const tAtlas = await makeText("ATLAS | SOLANA",                            10, false, pc,     200, 18);
-  const tToken = await makeText(input.mintShort,                             26, true,  white,  580, 42);
-  const tHeld  = await makeText("Held for " + input.heldFor,                 13, false, muted,  300, 24);
-  const tPnl   = await makeText(pnlPctText,                                 120, true,  pc,     700, 155);
-  const tMult  = await makeText(multiplier,                                  28, true,  pc,     140, 42);
-  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           21, true,  white,  210, 34);
-  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          21, true,  pc,     210, 34);
-  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  21, true,  pc,     230, 34);
-  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 220, 22);
-  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pc,     240, 22);
+  const bg = await sharp(bgSvg).png().toBuffer();
+
+  // Text elements — bigger token name, crisper labels
+  const tAtlas = await makeText("ATLAS | SOLANA",                            11, true,  pc,     220, 20);
+  const tToken = await makeText(input.mintShort,                             34, true,  white,  600, 52);
+  const tHeld  = await makeText("Held for " + input.heldFor,                 14, false, muted,  320, 26);
+  const tPnl   = await makeText(pnlPctText,                                 118, true,  pc,     700, 150);
+  const tMult  = await makeText(multiplier,                                  30, true,  pc,     160, 46);
+  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           22, true,  silver, 220, 36);
+  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          22, true,  pc,     220, 36);
+  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  22, true,  pc,     240, 36);
+  const tUser  = await makeText("@" + input.username,                        13, false, muted2, 240, 24);
+  const tWmark = await makeText("@AtlasSolanaTrading",                       12, true,  pcDim,  260, 24);
 
   return sharp(bg)
     .composite([
-      { input: svg,    top: 0,               left: 0   },
-      { input: tAtlas, top: 28,              left: 48  },
-      { input: tToken, top: 50,              left: 48  },
-      { input: tHeld,  top: 104,             left: 48  },
-      { input: tMult,  top: BADGE_Y + 10,    left: BADGE_X + Math.floor((BADGE_W - 140) / 2) },
-      { input: tPnl,   top: 160,             left: 40  },
-      { input: tIV,    top: DIVIDER_Y + 30,  left: 48  },
-      { input: tPV,    top: DIVIDER_Y + 30,  left: 300 },
-      { input: tNV,    top: DIVIDER_Y + 30,  left: 530 },
-      { input: tUser,  top: FOOTER_Y + 14,   left: 48  },
-      { input: tWmark, top: FOOTER_Y + 14,   left: 620 },
+      { input: tAtlas, top: 26,              left: 48  },
+      { input: tToken, top: 48,              left: 48  },
+      { input: tHeld,  top: 108,             left: 48  },
+      { input: tMult,  top: BADGE_Y + 12,    left: BADGE_X + Math.floor((BADGE_W - 160) / 2) },
+      { input: tPnl,   top: 158,             left: 38  },
+      { input: tIV,    top: DIVIDER_Y + 32,  left: 48  },
+      { input: tPV,    top: DIVIDER_Y + 32,  left: 310 },
+      { input: tNV,    top: DIVIDER_Y + 32,  left: 560 },
+      { input: tUser,  top: FOOTER_Y + 16,   left: 48  },
+      { input: tWmark, top: FOOTER_Y + 16,   left: 610 },
     ])
     .png()
     .toBuffer();
@@ -2489,7 +2495,7 @@ async function executeBuyFromActiveMint(
         if (!fresh.positions) fresh.positions = [];
         const existing = fresh.positions.find((p: any) => p.mint === mintStr && p.wallet === wallet.name);
         if (existing) { (existing as any).entry = ((existing as any).entry ?? 0) + solAmount; }
-        else { fresh.positions.push({ wallet: wallet.name, mint: mintStr, entry: solAmount * 0.99, amount: 0, createdAt: Date.now() } as any); }
+        else { fresh.positions.push({ wallet: wallet.name, mint: mintStr, entry: solAmount, amount: 0, createdAt: Date.now() } as any); }
         invalidateBalanceCache(wallet.pubkey);
         setUser(fresh);
       } catch {}
@@ -2500,32 +2506,7 @@ async function executeBuyFromActiveMint(
     let summary = `✅ *Multi-wallet Buy Complete*\n\nSpent: *${solAmount} SOL* per wallet\n\n`;
     if (succeeded.length) summary += succeeded.map(r => `✅ *${r.value.name}*: \`${r.value.sig.slice(0,20)}...\``).join("\n") + "\n";
     if (failed2.length) summary += "\n" + failed2.map(r => `❌ ${r.reason?.message ?? "failed"}`).join("\n");
-
-    if (succeeded.length > 0) {
-      // Show summary briefly, then transition to sell/monitor menu
-      await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
-      activeSellMint.set(userId, mintStr);
-      const sellText = await buildSellTokenText(userId);
-      const sellKb = sellTokenKeyboard(userId);
-      const liveMsg = await ctx.reply(sellText, { parse_mode: "Markdown", ...sellKb });
-      // Auto-refresh
-      clearUserRefresh(userId);
-      let refreshCount = 0;
-      const interval = setInterval(async () => {
-        refreshCount++;
-        if (refreshCount >= 20) { clearUserRefresh(userId); return; }
-        try {
-          if (activeSellMint.get(userId) !== mintStr) { clearUserRefresh(userId); return; }
-          await ctx.telegram.editMessageText(liveMsg.chat.id, liveMsg.message_id, undefined,
-            await buildSellTokenText(userId),
-            { parse_mode: "Markdown", ...sellTokenKeyboard(userId) }
-          );
-        } catch { clearUserRefresh(userId); }
-      }, 15000);
-      activeRefreshIntervals.set(userId, interval);
-    } else {
-      await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
-    }
+    await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
     return;
   }
 
@@ -2635,68 +2616,29 @@ if (!def) {
     if (existingPos) {
       (existingPos as any).entry = ((existingPos as any).entry ?? 0) + solAmount;
     } else {
-      fresh.positions.push({ wallet: walletName, mint: mint.toBase58(), entry: solAmount * 0.99, amount: 0, createdAt: Date.now() } as any);
+      fresh.positions.push({ wallet: walletName, mint: mint.toBase58(), entry: solAmount, amount: 0, createdAt: Date.now() } as any);
     }
     invalidateBalanceCache(def.pubkey);
     setUser(fresh);
   } catch {}
 
+  const info = await fetchTokenInfo(mint.toBase58()).catch(() => null);
+  const priceStr = info ? fmtPrice(info.price) : "Unknown";
+  const mcStr    = info ? fmtUsd(info.mc)      : "Unknown";
   const usedSlippagePct = (usedSlippageBps / 100).toFixed(2);
 
-  // Switch to live sell/monitor menu immediately after buy
-  activeSellMint.set(userId, mint.toBase58());
-
-  const sellText = await buildSellTokenText(userId);
-  const sellKb = sellTokenKeyboard(userId);
-
-  let liveMessageId: number;
-  let liveChatId: number;
-
-  try {
-    const edited = await ctx.telegram.editMessageText(
-      loading.chat.id, loading.message_id, undefined,
-      sellText,
-      { parse_mode: "Markdown", ...sellKb }
-    );
-    liveMessageId = (edited as any).message_id;
-    liveChatId = (edited as any).chat.id;
-  } catch {
-    const sent = await ctx.reply(sellText, { parse_mode: "Markdown", ...sellKb });
-    liveMessageId = sent.message_id;
-    liveChatId = sent.chat.id;
-  }
-
-  // Cancel any existing refresh for this user before starting a new one
-  clearUserRefresh(userId);
-
-  // Auto-refresh every 15 seconds, up to 20 times (5 minutes)
-  let refreshCount = 0;
-  const MAX_REFRESHES = 20;
-  const refreshInterval = setInterval(async () => {
-    refreshCount++;
-    if (refreshCount >= MAX_REFRESHES) {
-      clearUserRefresh(userId);
-      return;
-    }
-    try {
-      const currentSell = activeSellMint.get(userId);
-      if (!currentSell || currentSell !== mint.toBase58()) {
-        clearUserRefresh(userId);
-        return;
-      }
-      const updatedText = await buildSellTokenText(userId);
-      const updatedKb = sellTokenKeyboard(userId);
-      await ctx.telegram.editMessageText(
-        liveChatId, liveMessageId, undefined,
-        updatedText,
-        { parse_mode: "Markdown", ...updatedKb }
-      );
-    } catch {
-      // Message was replaced or edited by user — stop refreshing
-      clearUserRefresh(userId);
-    }
-  }, 15000);
-  activeRefreshIntervals.set(userId, refreshInterval);
+  await ctx.telegram.editMessageText(
+    loading.chat.id, loading.message_id, undefined,
+    `✅ *Bought*\n\n` +
+    `${info ? `*${info.name} (${info.symbol})*\n` : ""}` +
+    `\`${mint.toBase58()}\`\n\n` +
+    `Spent: *${solAmount} SOL*\n` +
+    `Price: *${priceStr}*\n` +
+    `MC: *${mcStr}*\n` +
+    `Slippage used: *${usedSlippagePct}%*\n\n` +
+    `🧾 Tx: \`${sig}\``,
+    { parse_mode: "Markdown" }
+  );
 }
 
 /* =========================
@@ -4309,14 +4251,20 @@ bot.action("BL_TRIGGER_MC", async (ctx) => {
 
 bot.action("BL_SET_AMOUNT", async (ctx) => {
   await ctx.answerCbQuery();
-  setFlow(ctx.from!.id, "AWAIT_BUY_LIMIT_AMOUNT");
-  await ctx.reply("Enter the buy amount in SOL (e.g. 0.1). Type /cancel to abort.");
+  const userId = ctx.from!.id;
+  const d = getBuyLimitDraft(userId);
+  const next = d.amountSol === 1 ? 0.5 : d.amountSol === 0.5 ? 0.1 : 1;
+  setBuyLimitDraft(userId, { amountSol: next });
+  await showBuyLimitMenu(ctx, userId);
 });
 
 bot.action("BL_SET_DURATION", async (ctx) => {
   await ctx.answerCbQuery();
-  setFlow(ctx.from!.id, "AWAIT_BUY_LIMIT_DURATION");
-  await ctx.reply("Enter the duration in hours (e.g. 24, 72, 168). Type /cancel to abort.");
+  const userId = ctx.from!.id;
+  const d = getBuyLimitDraft(userId);
+  const next = d.durationHours === 168 ? 72 : d.durationHours === 72 ? 24 : 168;
+  setBuyLimitDraft(userId, { durationHours: next });
+  await showBuyLimitMenu(ctx, userId);
 });
 
 bot.action("BL_ADD", async (ctx) => {
@@ -4612,11 +4560,6 @@ async function buildSellTokenText(userId: number) {
     pnlLine = `\n${pnlEmoji} *PnL: ${sign}${pnlPct.toFixed(2)}%* (${sign}${pnlSol.toFixed(4)} SOL)`;
     initialLine = `\n💰 Initial: *${pos.entry.toFixed(4)} SOL* | Payout: *${currentValueSol.toFixed(4)} SOL*`;
     timerLine = `\n⏱ Held for: *${timeStr}*`;
-  } else if (bal > 0 && info) {
-    // Has balance but no tracked entry — show current value only
-    const currentValueSol = bal * info.priceSOL;
-    pnlLine = `\n⚠️ *PnL unavailable* — no entry price recorded`;
-    initialLine = `\n💰 Current value: *${currentValueSol.toFixed(4)} SOL*`;
   }
 
   // Sell limits summary
@@ -4744,7 +4687,6 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
 
 // Sell Token Screen Actions
 bot.action("ST_REFRESH", async (ctx) => {
-  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery("🔄 Refreshing...");
   const userId = ctx.from!.id;
   const mint = activeSellMint.get(userId);
@@ -4753,7 +4695,6 @@ bot.action("ST_REFRESH", async (ctx) => {
 });
 
 bot.action("ST_RETURN", async (ctx) => {
-  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery();
   await showBuyTokenMenu(ctx, ctx.from!.id);
 });
@@ -4808,7 +4749,6 @@ bot.action("ST_SELL_X_TOKENS", async (ctx) => {
 });
 
 bot.action("ST_DELETE_POS", async (ctx) => {
-  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery();
   const userId = ctx.from!.id;
   const mintStr = activeSellMint.get(userId);
@@ -4823,7 +4763,6 @@ bot.action("ST_DELETE_POS", async (ctx) => {
 });
 
 bot.action("ST_PREV_POS", async (ctx) => {
-  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery();
   const userId = ctx.from!.id;
   const u = getUser(userId);
@@ -4837,7 +4776,6 @@ bot.action("ST_PREV_POS", async (ctx) => {
 });
 
 bot.action("ST_NEXT_POS", async (ctx) => {
-  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery();
   const userId = ctx.from!.id;
   const u = getUser(userId);
@@ -4851,35 +4789,7 @@ bot.action("ST_NEXT_POS", async (ctx) => {
 });
 
 bot.action("ST_WALLET", async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from!.id;
-  const u = getUser(userId);
-  if (!u.wallets.length) { await ctx.answerCbQuery("No wallets found."); return; }
-  const current = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
-  const buttons = u.wallets.map((w) => [
-    Markup.button.callback(
-      `${w.name === current ? "✅" : "⬜"} ${w.name}`,
-      `ST_WALLET_SELECT_${w.id}`
-    ),
-  ]);
-  buttons.push([Markup.button.callback("❌ Cancel", "ST_WALLET_CANCEL")]);
-  await ctx.reply("Select wallet to sell from:", Markup.inlineKeyboard(buttons));
-});
-
-bot.action(/^ST_WALLET_SELECT_(.+)$/, async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from!.id;
-  const walletId = ctx.match[1];
-  const u = getUser(userId);
-  const wallet = u.wallets.find((w) => w.id === walletId);
-  if (!wallet) { await ctx.answerCbQuery("Wallet not found."); return; }
-  selectedPositionWallet.set(userId, wallet.name);
-  await showSellTokenMenu(ctx, userId);
-});
-
-bot.action("ST_WALLET_CANCEL", async (ctx) => {
-  await ctx.answerCbQuery();
-  await showSellTokenMenu(ctx, ctx.from!.id);
+  await ctx.answerCbQuery("Wallet switching coming soon");
 });
 
 bot.action("ST_TOGGLE_MULTI", async (ctx) => {
@@ -5218,9 +5128,7 @@ type Flow =
   | "AWAIT_SELL_X_TOKENS"
   | "AWAIT_BUY_X_SOL"
   | "AWAIT_BUY_X_TOKENS"
-  | "AWAIT_BUY_LIMIT_TRIGGER_VALUE"
-  | "AWAIT_BUY_LIMIT_AMOUNT"
-  | "AWAIT_BUY_LIMIT_DURATION";
+  | "AWAIT_BUY_LIMIT_TRIGGER_VALUE";
 
 const userFlow = new Map<number, Flow>();
 const selectedPositionWallet = new Map<number, string>();
@@ -5602,31 +5510,7 @@ bot.on("text", async (ctx, next) => {
     return;
   }
 
-  if (flow === "AWAIT_BUY_LIMIT_AMOUNT") {
-    const val = parseFloat(txt);
-    if (isNaN(val) || val <= 0) {
-      await ctx.reply("❌ Invalid amount. Enter a positive SOL amount like 0.1, or /cancel.");
-      return;
-    }
-    setBuyLimitDraft(userId, { amountSol: val });
-    setFlow(userId, "NONE");
-    await ctx.reply(`✅ Buy amount set to *${val} SOL*`, { parse_mode: "Markdown" });
-    await showBuyLimitMenu(ctx, userId);
-    return;
-  }
-
-  if (flow === "AWAIT_BUY_LIMIT_DURATION") {
-    const val = parseInt(txt);
-    if (isNaN(val) || val <= 0) {
-      await ctx.reply("❌ Invalid duration. Enter hours as a number like 24, or /cancel.");
-      return;
-    }
-    setBuyLimitDraft(userId, { durationHours: val });
-    setFlow(userId, "NONE");
-    await ctx.reply(`✅ Duration set to *${val}h*`, { parse_mode: "Markdown" });
-    await showBuyLimitMenu(ctx, userId);
-    return;
-  }
+  if (flow === "AWAIT_SELL_X_SOL") {
     const solAmt = parseFloat(txt);
     if (isNaN(solAmt) || solAmt <= 0) { await ctx.reply("❌ Invalid amount."); return; }
     const mintStr = activeSellMint.get(userId);
@@ -6022,7 +5906,9 @@ bot.command("admin", async (ctx) => {
     if (!toAddress || isNaN(amount) || amount <= 0) { await ctx.reply("Usage: /admin withdraw <address> <amount_sol>"); return; }
     try { new PublicKey(toAddress); } catch { await ctx.reply("❌ Invalid destination address."); return; }
     const bal = await getFeeAccumulatorBalance();
-    if (amount > bal - 0.001) { await ctx.reply(`❌ Insufficient balance. Available: ${bal.toFixed(6)} SOL`); return; }
+    const TX_FEE_RESERVE = 0.000005; // just enough for the transaction fee
+    const spendable = bal - TX_FEE_RESERVE;
+    if (amount > spendable) { await ctx.reply(`❌ Insufficient balance. Available: ${spendable.toFixed(6)} SOL (total: ${bal.toFixed(6)} SOL)`); return; }
     await ctx.reply(`⏳ Withdrawing ${amount} SOL...`);
     try {
       const sig = await withdrawFees(toAddress, amount);
