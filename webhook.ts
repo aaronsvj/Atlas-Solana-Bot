@@ -196,8 +196,13 @@ export function startWebhookServer(
     const r = Number(rate);
     if (isNaN(r) || r < 1 || r > 100) return res.status(400).json({ error: "rate must be 1-100" });
     const db = loadDB() as any;
-    if (!db.users?.[String(userId)]) return res.status(404).json({ error: "User not found" });
-    db.users[String(userId)].referralRate = r;
+    if (!db.users) db.users = {};
+    // Create minimal record if user hasn't started the bot yet
+    if (!db.users[String(userId)]) {
+      db.users[String(userId)] = { userId: Number(userId), referralRate: r };
+    } else {
+      db.users[String(userId)].referralRate = r;
+    }
     saveDB(db);
     res.json({ ok: true });
   });
