@@ -81,6 +81,20 @@ function removeFromBlacklist(mint: string): void {
 function isBlacklisted(mint: string): boolean { return getBlacklist().has(mint); }
 
 /* =========================
+   PARTNER MANAGEMENT
+========================= */
+function getPartners(): Set<number> {
+  try { const db = loadDB() as any; return new Set(db.partners ?? []); } catch { return new Set(); }
+}
+function addPartner(userId: number): void {
+  try { const db = loadDB() as any; if (!db.partners) db.partners = []; if (!db.partners.includes(userId)) { db.partners.push(userId); saveDB(db); } } catch {}
+}
+function removePartner(userId: number): void {
+  try { const db = loadDB() as any; if (!db.partners) return; db.partners = db.partners.filter((id: number) => id !== userId); saveDB(db); } catch {}
+}
+function isPartner(userId: number): boolean { return getPartners().has(userId); }
+
+/* =========================
    FEE COLLECTION — Jupiter Platform Fee + Accumulator Wallet
 ========================= */
 
@@ -105,9 +119,12 @@ async function creditReferrerFee(userId: number, feeSol: number): Promise<void> 
     const referrer = getUserByReferralCode(u.referredBy);
     if (!referrer) return;
 
-    // Only credit within first 30 days
-    const userCreatedAt = new Date(u.createdAt).getTime();
-    if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
+    // Partners earn 20% forever, regular referrers earn 20% for 30 days only
+    const isReferrerPartner = isPartner(referrer.userId);
+    if (!isReferrerPartner) {
+      const userCreatedAt = new Date(u.createdAt).getTime();
+      if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
+    }
 
     const referrerShare = feeSol * 0.20;
     const referrerShareLamports = Math.floor(referrerShare * LAMPORTS_PER_SOL);
@@ -213,7 +230,7 @@ async function collectFee(
    DB
 ========================= */
 
-const DB_PATH = path.join(process.cwd(), "db.json");
+const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), "db.json");
 
 type WalletRecord = {
   id: string;
@@ -896,6 +913,11 @@ async function getTokenHolding(owner: PublicKey, mint: PublicKey): Promise<Token
 ========================= */
 
 const activeBuyMint = new Map<number, string>();
+const activeRefreshIntervals = new Map<number, ReturnType<typeof setInterval>>();
+function clearUserRefresh(userId: number) {
+  const existing = activeRefreshIntervals.get(userId);
+  if (existing) { clearInterval(existing); activeRefreshIntervals.delete(userId); }
+}
 const sendSolAddress = new Map<number, string>();
 const buyLimitDrafts = new Map<number, BuyLimitDraft>();
 const walletReorderMode = new Map<number, boolean>();
@@ -954,18 +976,19 @@ async function fetchTokenInfo(mint: string): Promise<TokenInfo | null> {
     const pairs: any[] = json?.pairs ?? [];
     if (!pairs.length) return null;
 
-    // Pick the pair with highest liquidity
-    const pair = pairs.sort((a: any, b: any) =>
-      (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0)
-    )[0];
+    // Prefer pairs where our token is the BASE so priceNative = SOL per token (not inverted)
+    const mintLower = mint.toLowerCase();
+    const basePairs = pairs.filter((p: any) => p.baseToken?.address?.toLowerCase() === mintLower);
+    const pool = (basePairs.length > 0 ? basePairs : pairs)
+      .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
 
     const data: TokenInfo = {
-      price:     parseFloat(pair.priceUsd ?? "0"),
-      priceSOL:  parseFloat(pair.priceNative ?? "0"),
-      mc:        pair.fdv ?? pair.marketCap ?? 0,
-      liquidity: pair.liquidity?.usd ?? 0,
-      symbol:    pair.baseToken?.symbol ?? "???",
-      name:      pair.baseToken?.name ?? "Unknown",
+      price:     parseFloat(pool.priceUsd ?? "0"),
+      priceSOL:  parseFloat(pool.priceNative ?? "0"),
+      mc:        pool.fdv ?? pool.marketCap ?? 0,
+      liquidity: pool.liquidity?.usd ?? 0,
+      symbol:    pool.baseToken?.symbol ?? "???",
+      name:      pool.baseToken?.name ?? "Unknown",
     };
 
     tokenInfoCache.set(mint, { data, ts: now });
@@ -1033,6 +1056,7 @@ async function setHeliusWebhookAddresses(addresses: string[]) {
         transactionTypes: ["SWAP"],
         accountAddresses: addresses,
         webhookType: "enhanced",
+        ...(process.env.HELIUS_WEBHOOK_SECRET ? { authHeader: process.env.HELIUS_WEBHOOK_SECRET } : {}),
       }),
     }
   );
@@ -1410,12 +1434,26 @@ return (
 async function buildBuyLimitText(userId: number) {
   const mint = activeBuyMint.get(userId);
   const draft = getBuyLimitDraft(userId);
+  const u = getUser(userId);
+  const savedOrders: any[] = ((u as any).buyLimits ?? []).filter((o: any) => !mint || o.mint === mint);
+
+  let ordersSection = "";
+  if (savedOrders.length === 0) {
+    ordersSection = `⚠️ You have no Buy Limits configured.\n\n`;
+  } else {
+    ordersSection = `📋 *Active Buy Limits (${savedOrders.length})*\n\n`;
+    savedOrders.forEach((o: any, i: number) => {
+      const triggerLabel = o.triggerType === "PRICE" ? `Price: ${o.triggerValue}` : `MC: $${Number(o.triggerValue).toLocaleString()}`;
+      ordersSection += `${i + 1}. ${triggerLabel} → Buy *${o.amountSol} SOL* | ${o.durationHours}h${o.multiBuy ? " | Multi" : ""}\n`;
+    });
+    ordersSection += "\n";
+  }
 
   return (
-    `${mint ? `${shortAddr(mint, 12, 8)}\n${mint}\n\n` : ""}` +
+    `${mint ? `${shortAddr(mint, 12, 8)}\n\`${mint}\`\n\n` : ""}` +
     `⚙️ *Buy Limit Orders*\n\n` +
-    `Set buy limit orders at a target price or market cap.\n\n` +
-    `⚠️ You have no Buy Limits configured.\n\n` +
+    ordersSection +
+    `*New Order Draft:*\n` +
     `Trigger: *${draft.triggerType === "PRICE" ? "Price" : "MC"}*\n` +
     `Amount: *${draft.amountSol} SOL*\n` +
     `Duration: *${draft.durationHours}h*\n`
@@ -1994,23 +2032,25 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const pathMod = await import("path");
   const fsMod   = await import("fs");
 
+  const W = 900, H = 500;
   const pnlSign    = input.pnlPct >= 0 ? "+" : "";
   const pnlPctText = `${pnlSign}${input.pnlPct.toFixed(1)}%`;
+  const multiplier = (input.valueSol / input.costSol).toFixed(2) + "x";
 
   const fontFile = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
   const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  const pc     = input.pnlPct >= 0 ? { r: 26,  g: 140, b: 255 } : { r: 255, g: 68,  b: 68  };
-  const white  = { r: 255, g: 255, b: 255 };
-  const muted  = { r: 100, g: 116, b: 139 };
-  const muted2 = { r: 148, g: 163, b: 184 };
+  const pc    = input.pnlPct >= 0 ? { r: 26,  g: 140, b: 255 } : { r: 255, g: 68,  b: 68  };
+  const white = { r: 255, g: 255, b: 255 };
+  const muted = { r: 100, g: 116, b: 139 };
+  const muted2= { r: 148, g: 163, b: 184 };
 
   async function makeText(
     text: string, size: number, bold: boolean,
     color: { r: number; g: number; b: number },
     maxW: number, maxH: number
   ): Promise<Buffer> {
-    const esc2 = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const esc2 = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
     const pango = bold ? `<b>${esc2(text)}</b>` : esc2(text);
     const textBuf = await (sharp as any)({
       text: { text: pango, fontfile: bold ? fontBold : fontFile, font: "DejaVu Sans", fontSize: size, rgba: true, width: maxW, height: maxH },
@@ -2027,59 +2067,76 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     return sharp(out, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer();
   }
 
-  // Background
   const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
   const bg = fsMod.existsSync(bgPath)
-    ? await sharp(bgPath).resize(900, 500).png().toBuffer()
-    : await sharp({ create: { width: 900, height: 500, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } } })
+    ? await sharp(bgPath).resize(W, H).png().toBuffer()
+    : await sharp({ create: { width: W, height: H, channels: 4, background: { r: 8, g: 12, b: 20, alpha: 1 } } })
         .composite([{ input: Buffer.from(
-          `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">` +
-          `<rect width="900" height="500" fill="#0a0e1a"/>` +
-          `<circle cx="820" cy="60" r="200" fill="#0d1829" opacity="0.9"/>` +
-          `<circle cx="820" cy="60" r="140" fill="#0f1f35" opacity="0.7"/>` +
-          `<circle cx="100" cy="480" r="120" fill="#0d1829" opacity="0.5"/>` +
+          `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
+          `<rect width="${W}" height="${H}" fill="#0a0e1a"/>` +
+          `<circle cx="820" cy="80"  r="200" fill="#1a2a3a" opacity="0.6"/>` +
+          `<circle cx="820" cy="420" r="160" fill="#1a2a3a" opacity="0.5"/>` +
           `</svg>`
         ), top: 0, left: 0 }])
         .png().toBuffer();
 
-  // SVG overlay — lines and column labels (no font lookup needed for simple SVG text)
-  const dividerY = 330;
-  const footerY  = 440;
+  const DIVIDER_Y = 330;
+  const FOOTER_Y  = 440;
+  const BADGE_X   = 680;
+  const BADGE_W   = 176;
+  const BADGE_H   = 72;
+  const BADGE_Y   = 22;
+  const BADGE_R   = 10;
+
   const svg = Buffer.from(
-    `<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">` +
-    `<rect x="0" y="0" width="4" height="500" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
-    `<rect x="48" y="162" width="60" height="2" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.8"/>` +
-    `<rect x="48" y="${dividerY}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.25"/>` +
-    `<rect x="48" y="${footerY}" width="804" height="1" fill="rgba(255,255,255,0.1)"/>` +
-    `<text x="48"  y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">INVESTED</text>` +
-    `<text x="300" y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">PAYOUT</text>` +
-    `<text x="530" y="${dividerY + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75" letter-spacing="1.5">PNL</text>` +
+    `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
+    `<rect x="0" y="0" width="4" height="${H}" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
+    `<defs>` +
+      `<linearGradient id="tl" x1="0" y1="0" x2="1" y2="0">` +
+        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="1"/>` +
+        `<stop offset="60%"  stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.15"/>` +
+        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
+      `</linearGradient>` +
+    `</defs>` +
+    `<rect x="0" y="0" width="${W}" height="2" fill="url(#tl)"/>` +
+    `<rect x="48" y="168" width="50" height="2" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.75"/>` +
+    `<rect x="48" y="${DIVIDER_Y}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.25"/>` +
+    `<rect x="48" y="${FOOTER_Y}" width="804" height="1" fill="rgba(255,255,255,0.08)"/>` +
+    `<text x="48"  y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">INVESTED</text>` +
+    `<text x="300" y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">PAYOUT</text>` +
+    `<text x="530" y="${DIVIDER_Y + 22}" font-family="DejaVu Sans,sans-serif" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.7" letter-spacing="1.5">PNL</text>` +
+    `<rect x="${BADGE_X}" y="${BADGE_Y}" width="${BADGE_W}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}" fill="rgba(8,14,28,0.72)" stroke="rgb(${pc.r},${pc.g},${pc.b})" stroke-width="1.2"/>` +
+    `<text x="${BADGE_X + BADGE_W/2}" y="${BADGE_Y + BADGE_H - 10}" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="10" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="1.5">MULTIPLIER</text>` +
     `</svg>`
   );
 
-  // Text buffers
-  const tAtlas = await makeText("ATLAS | SOLANA",                            10, false, pc,     200, 20);
-  const tToken = await makeText(input.mintShort,                             28, true,  white,  620, 44);
+  const tAtlas = await makeText("ATLAS | SOLANA",                            10, false, pc,     200, 18);
+  const tToken = await makeText(input.mintShort,                             26, true,  white,  580, 42);
   const tHeld  = await makeText("Held for " + input.heldFor,                 13, false, muted,  300, 24);
-  const tPnl   = await makeText(pnlPctText,                                  130, true, pc,     720, 160);
-  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           22, true,  white,  220, 36);
-  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          22, true,  pc,     220, 36);
-  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  22, true,  pc,     240, 36);
-  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 220, 24);
-  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pc,     250, 24);
+  const tPnl   = await makeText(pnlPctText,                                 120, true,  pc,     700, 155);
+  const tMult  = await makeText(multiplier,                                  28, true,  pc,     140, 42);
+  const tIV    = await makeText(input.costSol.toFixed(4) + " SOL",           21, true,  white,  210, 34);
+  const tPV    = await makeText(input.valueSol.toFixed(4) + " SOL",          21, true,  pc,     210, 34);
+  const tNV    = await makeText(pnlSign + input.pnlSol.toFixed(4) + " SOL",  21, true,  pc,     230, 34);
+  const tUser  = await makeText("@" + input.username,                        12, false, muted2, 220, 22);
+  const tWmark = await makeText("@AtlasSolanaTrading",                       11, true,  pc,     240, 22);
 
-  return sharp(bg).composite([
-    { input: svg,    top: 0,              left: 0   },
-    { input: tAtlas, top: 38,             left: 48  },
-    { input: tToken, top: 60,             left: 48  },
-    { input: tHeld,  top: 115,            left: 48  },
-    { input: tPnl,   top: 152,            left: 44  },
-    { input: tIV,    top: dividerY + 32,  left: 48  },
-    { input: tPV,    top: dividerY + 32,  left: 300 },
-    { input: tNV,    top: dividerY + 32,  left: 530 },
-    { input: tUser,  top: footerY + 16,   left: 48  },
-    { input: tWmark, top: footerY + 16,   left: 615 },
-  ]).png().toBuffer();
+  return sharp(bg)
+    .composite([
+      { input: svg,    top: 0,               left: 0   },
+      { input: tAtlas, top: 28,              left: 48  },
+      { input: tToken, top: 50,              left: 48  },
+      { input: tHeld,  top: 104,             left: 48  },
+      { input: tMult,  top: BADGE_Y + 10,    left: BADGE_X + Math.floor((BADGE_W - 140) / 2) },
+      { input: tPnl,   top: 160,             left: 40  },
+      { input: tIV,    top: DIVIDER_Y + 30,  left: 48  },
+      { input: tPV,    top: DIVIDER_Y + 30,  left: 300 },
+      { input: tNV,    top: DIVIDER_Y + 30,  left: 530 },
+      { input: tUser,  top: FOOTER_Y + 14,   left: 48  },
+      { input: tWmark, top: FOOTER_Y + 14,   left: 620 },
+    ])
+    .png()
+    .toBuffer();
 }
 
 /* =========================
@@ -2432,7 +2489,7 @@ async function executeBuyFromActiveMint(
         if (!fresh.positions) fresh.positions = [];
         const existing = fresh.positions.find((p: any) => p.mint === mintStr && p.wallet === wallet.name);
         if (existing) { (existing as any).entry = ((existing as any).entry ?? 0) + solAmount; }
-        else { fresh.positions.push({ wallet: wallet.name, mint: mintStr, entry: solAmount, amount: 0, createdAt: Date.now() } as any); }
+        else { fresh.positions.push({ wallet: wallet.name, mint: mintStr, entry: solAmount * 0.99, amount: 0, createdAt: Date.now() } as any); }
         invalidateBalanceCache(wallet.pubkey);
         setUser(fresh);
       } catch {}
@@ -2443,7 +2500,32 @@ async function executeBuyFromActiveMint(
     let summary = `✅ *Multi-wallet Buy Complete*\n\nSpent: *${solAmount} SOL* per wallet\n\n`;
     if (succeeded.length) summary += succeeded.map(r => `✅ *${r.value.name}*: \`${r.value.sig.slice(0,20)}...\``).join("\n") + "\n";
     if (failed2.length) summary += "\n" + failed2.map(r => `❌ ${r.reason?.message ?? "failed"}`).join("\n");
-    await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
+
+    if (succeeded.length > 0) {
+      // Show summary briefly, then transition to sell/monitor menu
+      await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
+      activeSellMint.set(userId, mintStr);
+      const sellText = await buildSellTokenText(userId);
+      const sellKb = sellTokenKeyboard(userId);
+      const liveMsg = await ctx.reply(sellText, { parse_mode: "Markdown", ...sellKb });
+      // Auto-refresh
+      clearUserRefresh(userId);
+      let refreshCount = 0;
+      const interval = setInterval(async () => {
+        refreshCount++;
+        if (refreshCount >= 20) { clearUserRefresh(userId); return; }
+        try {
+          if (activeSellMint.get(userId) !== mintStr) { clearUserRefresh(userId); return; }
+          await ctx.telegram.editMessageText(liveMsg.chat.id, liveMsg.message_id, undefined,
+            await buildSellTokenText(userId),
+            { parse_mode: "Markdown", ...sellTokenKeyboard(userId) }
+          );
+        } catch { clearUserRefresh(userId); }
+      }, 15000);
+      activeRefreshIntervals.set(userId, interval);
+    } else {
+      await ctx.telegram.editMessageText(loading.chat.id, loading.message_id, undefined, summary, { parse_mode: "Markdown" });
+    }
     return;
   }
 
@@ -2553,29 +2635,68 @@ if (!def) {
     if (existingPos) {
       (existingPos as any).entry = ((existingPos as any).entry ?? 0) + solAmount;
     } else {
-      fresh.positions.push({ wallet: walletName, mint: mint.toBase58(), entry: solAmount, amount: 0, createdAt: Date.now() } as any);
+      fresh.positions.push({ wallet: walletName, mint: mint.toBase58(), entry: solAmount * 0.99, amount: 0, createdAt: Date.now() } as any);
     }
     invalidateBalanceCache(def.pubkey);
     setUser(fresh);
   } catch {}
 
-  const info = await fetchTokenInfo(mint.toBase58()).catch(() => null);
-  const priceStr = info ? fmtPrice(info.price) : "Unknown";
-  const mcStr    = info ? fmtUsd(info.mc)      : "Unknown";
   const usedSlippagePct = (usedSlippageBps / 100).toFixed(2);
 
-  await ctx.telegram.editMessageText(
-    loading.chat.id, loading.message_id, undefined,
-    `✅ *Bought*\n\n` +
-    `${info ? `*${info.name} (${info.symbol})*\n` : ""}` +
-    `\`${mint.toBase58()}\`\n\n` +
-    `Spent: *${solAmount} SOL*\n` +
-    `Price: *${priceStr}*\n` +
-    `MC: *${mcStr}*\n` +
-    `Slippage used: *${usedSlippagePct}%*\n\n` +
-    `🧾 Tx: \`${sig}\``,
-    { parse_mode: "Markdown" }
-  );
+  // Switch to live sell/monitor menu immediately after buy
+  activeSellMint.set(userId, mint.toBase58());
+
+  const sellText = await buildSellTokenText(userId);
+  const sellKb = sellTokenKeyboard(userId);
+
+  let liveMessageId: number;
+  let liveChatId: number;
+
+  try {
+    const edited = await ctx.telegram.editMessageText(
+      loading.chat.id, loading.message_id, undefined,
+      sellText,
+      { parse_mode: "Markdown", ...sellKb }
+    );
+    liveMessageId = (edited as any).message_id;
+    liveChatId = (edited as any).chat.id;
+  } catch {
+    const sent = await ctx.reply(sellText, { parse_mode: "Markdown", ...sellKb });
+    liveMessageId = sent.message_id;
+    liveChatId = sent.chat.id;
+  }
+
+  // Cancel any existing refresh for this user before starting a new one
+  clearUserRefresh(userId);
+
+  // Auto-refresh every 15 seconds, up to 20 times (5 minutes)
+  let refreshCount = 0;
+  const MAX_REFRESHES = 20;
+  const refreshInterval = setInterval(async () => {
+    refreshCount++;
+    if (refreshCount >= MAX_REFRESHES) {
+      clearUserRefresh(userId);
+      return;
+    }
+    try {
+      const currentSell = activeSellMint.get(userId);
+      if (!currentSell || currentSell !== mint.toBase58()) {
+        clearUserRefresh(userId);
+        return;
+      }
+      const updatedText = await buildSellTokenText(userId);
+      const updatedKb = sellTokenKeyboard(userId);
+      await ctx.telegram.editMessageText(
+        liveChatId, liveMessageId, undefined,
+        updatedText,
+        { parse_mode: "Markdown", ...updatedKb }
+      );
+    } catch {
+      // Message was replaced or edited by user — stop refreshing
+      clearUserRefresh(userId);
+    }
+  }, 15000);
+  activeRefreshIntervals.set(userId, refreshInterval);
 }
 
 /* =========================
@@ -4022,16 +4143,48 @@ bot.action("BT_REFRESH", async (ctx) => {
 });
 
 bot.action("BT_GO_SELL", async (ctx) => {
-  await ctx.answerCbQuery();
   const userId = ctx.from!.id;
   const mintStr = activeBuyMint.get(userId);
-  if (!mintStr) { await ctx.answerCbQuery("No active token"); return; }
+  if (!mintStr) {
+    await ctx.answerCbQuery("No active token selected");
+    return;
+  }
+  await ctx.answerCbQuery();
   activeSellMint.set(userId, mintStr);
   await showSellTokenMenu(ctx, userId);
 });
 
 bot.action("BT_WALLET", async (ctx) => {
-  await ctx.answerCbQuery("Wallet picker later");
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const u = getUser(userId);
+  if (!u.wallets.length) {
+    await ctx.answerCbQuery("No wallets found. Import one first.");
+    return;
+  }
+  const buttons = u.wallets.map((w) => [
+    Markup.button.callback(
+      `${w.isDefault ? "✅" : "⬜"} ${w.name}`,
+      `BT_WALLET_SELECT_${w.id}`
+    ),
+  ]);
+  buttons.push([Markup.button.callback("❌ Cancel", "BT_WALLET_CANCEL")]);
+  await ctx.reply("Select your active wallet:", Markup.inlineKeyboard(buttons));
+});
+
+bot.action(/^BT_WALLET_SELECT_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const walletId = ctx.match[1];
+  const u = getUser(userId);
+  u.wallets = u.wallets.map((w) => ({ ...w, isDefault: w.id === walletId }));
+  setUser(u);
+  await showBuyTokenMenu(ctx, userId);
+});
+
+bot.action("BT_WALLET_CANCEL", async (ctx) => {
+  await ctx.answerCbQuery();
+  await showBuyTokenMenu(ctx, ctx.from!.id);
 });
 
 bot.action("BT_TOGGLE_MULTI", async (ctx) => {
@@ -4074,21 +4227,27 @@ bot.action("BT_AMT_1", async (ctx) => {
 });
 
 bot.action("BT_BUY_X_SOL", async (ctx) => {
-  await ctx.answerCbQuery("Custom SOL amount later");
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_BUY_X_SOL");
+  await ctx.reply("Enter the amount of SOL to buy (e.g. 0.25). Type /cancel to abort.");
 });
 
 bot.action("BT_BUY_X_TOKENS", async (ctx) => {
-  await ctx.answerCbQuery("Custom token amount later");
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_BUY_X_TOKENS");
+  await ctx.reply("Enter the number of tokens to buy (e.g. 1000000). Type /cancel to abort.");
 });
 
 bot.action("BT_SHOW_SLIPPAGE", async (ctx) => {
   await ctx.answerCbQuery();
-  await showBuyTokenMenu(ctx, ctx.from!.id);
+  setFlow(ctx.from!.id, "AWAIT_SET_BUY_SLIPPAGE");
+  await ctx.reply("Type Buy Slippage % (example: 7). Type /cancel to abort.");
 });
 
 bot.action("BT_SHOW_GAS", async (ctx) => {
   await ctx.answerCbQuery();
-  await showBuyTokenMenu(ctx, ctx.from!.id);
+  setFlow(ctx.from!.id, "AWAIT_SET_BUY_GASDELTA");
+  await ctx.reply("Type Buy Gas Delta in SOL (example: 0.005). Type /cancel to abort.");
 });
 
 bot.action("BT_BUY_LIMIT", async (ctx) => {
@@ -4150,25 +4309,28 @@ bot.action("BL_TRIGGER_MC", async (ctx) => {
 
 bot.action("BL_SET_AMOUNT", async (ctx) => {
   await ctx.answerCbQuery();
-  const userId = ctx.from!.id;
-  const d = getBuyLimitDraft(userId);
-  const next = d.amountSol === 1 ? 0.5 : d.amountSol === 0.5 ? 0.1 : 1;
-  setBuyLimitDraft(userId, { amountSol: next });
-  await showBuyLimitMenu(ctx, userId);
+  setFlow(ctx.from!.id, "AWAIT_BUY_LIMIT_AMOUNT");
+  await ctx.reply("Enter the buy amount in SOL (e.g. 0.1). Type /cancel to abort.");
 });
 
 bot.action("BL_SET_DURATION", async (ctx) => {
   await ctx.answerCbQuery();
-  const userId = ctx.from!.id;
-  const d = getBuyLimitDraft(userId);
-  const next = d.durationHours === 168 ? 72 : d.durationHours === 72 ? 24 : 168;
-  setBuyLimitDraft(userId, { durationHours: next });
-  await showBuyLimitMenu(ctx, userId);
+  setFlow(ctx.from!.id, "AWAIT_BUY_LIMIT_DURATION");
+  await ctx.reply("Enter the duration in hours (e.g. 24, 72, 168). Type /cancel to abort.");
 });
 
 bot.action("BL_ADD", async (ctx) => {
-  await ctx.answerCbQuery("Buy limit storage later");
-  await showBuyLimitMenu(ctx, ctx.from!.id);
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const mint = activeBuyMint.get(userId);
+  if (!mint) {
+    await ctx.answerCbQuery("❌ No active token selected. Paste a CA first.");
+    return;
+  }
+  const d = getBuyLimitDraft(userId);
+  const triggerLabel = d.triggerType === "PRICE" ? "price in SOL (e.g. 0.00000025)" : "market cap in USD (e.g. 500000)";
+  setFlow(userId, "AWAIT_BUY_LIMIT_TRIGGER_VALUE");
+  await ctx.reply(`Enter the target ${triggerLabel} to trigger this buy. Type /cancel to abort.`);
 });
 
 /* =========================
@@ -4361,27 +4523,47 @@ function sellTokenKeyboard(userId: number) {
   const u = getUser(userId);
   const isMulti = u.global.walletSelection === "MULTI";
   const def = getDefaultWallet(userId);
+  const sellLimits = u.sellLimits ?? [];
+  const tpCount = sellLimits.filter((o: any) => o.type === "TAKE_PROFIT").length;
+  const slCount = sellLimits.filter((o: any) => o.type === "STOP_LOSS" || o.type === "TRAILING_SL").length;
+  const ordersLabel = tpCount + slCount > 0 ? `📋 Orders: ${tpCount} TP • ${slCount} SL` : `📋 Set Limits`;
+
   return Markup.inlineKeyboard([
     [
+      Markup.button.callback("⬅️", "ST_PREV_POS"),
       Markup.button.callback("🔄 Refresh", "ST_REFRESH"),
-      Markup.button.callback("📊 Sell Limits", "ST_SELL_LIMITS"),
-      Markup.button.callback("↩️ Buy", "ST_RETURN"),
+      Markup.button.callback("➡️", "ST_NEXT_POS"),
+    ],
+    [
+      Markup.button.callback("📋 Copy CA", "ST_COPY_CA"),
+      Markup.button.callback("🛒 Go to Buy", "ST_RETURN"),
     ],
     [
       Markup.button.callback(`💳 ${def?.name ?? "wallet"}`, "ST_WALLET"),
       Markup.button.callback(isMulti ? "🔴 Multi" : "⬜ Multi", "ST_TOGGLE_MULTI"),
     ],
     [
+      Markup.button.callback("Sell Initials", "ST_SELL_INITIALS"),
+      Markup.button.callback("☢️ Sell All", "ST_PCT_100"),
+    ],
+    [
       Markup.button.callback("25%", "ST_PCT_25"),
       Markup.button.callback("50%", "ST_PCT_50"),
+      Markup.button.callback("75%", "ST_PCT_75"),
       Markup.button.callback("100%", "ST_PCT_100"),
     ],
     [
       Markup.button.callback("Sell X%", "ST_SELL_X_PCT"),
+      Markup.button.callback("Sell X SOL", "ST_SELL_X_SOL"),
+      Markup.button.callback("Sell X Tokens", "ST_SELL_X_TOKENS"),
     ],
     [
-      Markup.button.callback(`ⓑ Slippage | ${u.sell.slippagePct}%`, "ST_SLIPPAGE"),
-      Markup.button.callback(`ⓑ Gas | ${u.sell.gasDeltaSol} SOL`, "ST_GAS"),
+      Markup.button.callback(`ⓢ Slippage | ${u.sell.slippagePct}%`, "ST_SLIPPAGE"),
+      Markup.button.callback(`⛽ Gas | ${u.sell.gasDeltaSol} SOL`, "ST_GAS"),
+    ],
+    [
+      Markup.button.callback(ordersLabel, "ST_SELL_LIMITS"),
+      Markup.button.callback("🗑 Delete", "ST_DELETE_POS"),
     ],
   ]);
 }
@@ -4401,31 +4583,65 @@ async function buildSellTokenText(userId: number) {
     fetchTokenInfo(mint).catch(() => null),
   ]);
 
-  const mcStr  = info ? fmtUsd(info.mc)       : "Unknown";
-  const prStr  = info ? fmtPrice(info.price)   : "Unknown";
-  const liqStr = info ? fmtUsd(info.liquidity) : "Unknown";
+  const mcStr  = info ? fmtUsd(info.mc)       : "N/A";
+  const prStr  = info ? fmtPrice(info.price)   : "N/A";
+  const liqStr = info ? fmtUsd(info.liquidity) : "N/A";
   const name   = info ? `${info.name} (${info.symbol})` : shortAddr(mint, 12, 8);
   const bal    = holding?.uiAmount ?? 0;
 
-  // PnL line
+  // PnL calculation
   const pos = (u.positions ?? []).find((p: any) => p.mint === mint && p.wallet === def.name);
   let pnlLine = "";
+  let initialLine = "";
+  let timerLine = "";
+
   if (pos && pos.entry > 0 && info && bal > 0) {
     const currentValueSol = bal * info.priceSOL;
-    const pnlPct = ((currentValueSol - pos.entry) / pos.entry) * 100;
+    const pnlSol = currentValueSol - pos.entry;
+    const pnlPct = (pnlSol / pos.entry) * 100;
     const sign = pnlPct >= 0 ? "+" : "";
-    pnlLine = `\n📊 PnL: *${sign}${pnlPct.toFixed(2)}%* | Entry: ${pos.entry.toFixed(4)} SOL`;
+    const pnlEmoji = pnlPct >= 0 ? "📈" : "📉";
+
+    // Time held
+    const ms = Date.now() - (pos.createdAt as number);
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    const timeStr = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+
+    pnlLine = `\n${pnlEmoji} *PnL: ${sign}${pnlPct.toFixed(2)}%* (${sign}${pnlSol.toFixed(4)} SOL)`;
+    initialLine = `\n💰 Initial: *${pos.entry.toFixed(4)} SOL* | Payout: *${currentValueSol.toFixed(4)} SOL*`;
+    timerLine = `\n⏱ Held for: *${timeStr}*`;
+  } else if (bal > 0 && info) {
+    // Has balance but no tracked entry — show current value only
+    const currentValueSol = bal * info.priceSOL;
+    pnlLine = `\n⚠️ *PnL unavailable* — no entry price recorded`;
+    initialLine = `\n💰 Current value: *${currentValueSol.toFixed(4)} SOL*`;
   }
 
+  // Sell limits summary
+  const limits = u.sellLimits ?? [];
+  const tpCount = limits.filter((o: any) => o.type === "TAKE_PROFIT").length;
+  const slCount = limits.filter((o: any) => o.type === "STOP_LOSS" || o.type === "TRAILING_SL").length;
+  const limitsLine = tpCount + slCount > 0
+    ? `\n📋 Orders: *${tpCount} TP • ${slCount} SL*`
+    : "";
+
+  // DEX links
+  const dexLinks = `[BirdEye](https://birdeye.so/token/${mint}) • [DexScreen](https://dexscreener.com/solana/${mint}) • [Solscan](https://solscan.io/token/${mint})`;
+
   return (
-    `🌕 *${name}*  🔗 *SOL*\n` +
+    `🌕 *${name}*\n` +
     `\`${mint}\`\n\n` +
-    `🗳 MC *${mcStr}* | 💵 Price *${prStr}*\n` +
-    `💧 Liquidity *${liqStr}*\n` +
-    `🕒 Live prices via DexScreener\n\n` +
+    `💵 Price: *${prStr}* | MC: *${mcStr}*\n` +
+    `💧 Liq: *${liqStr}*\n` +
     `💼 Balance: *${bal.toLocaleString()} ${info?.symbol ?? ""}*` +
-    pnlLine + `\n\n` +
-    `💰 *${def.name}* | Slippage: ${u.sell.slippagePct}% | Gas: ${u.sell.gasDeltaSol} SOL`
+    pnlLine +
+    initialLine +
+    timerLine +
+    limitsLine +
+    `\n\n🔗 ${dexLinks}\n` +
+    `💳 *${def.name}* | Slip: ${u.sell.slippagePct}% | Gas: ${u.sell.gasDeltaSol} SOL`
   );
 }
 
@@ -4504,7 +4720,7 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
         });
         await ctx.replyWithPhoto(
           { source: png },
-          { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
+          { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @AtlasSolanaTradeBot`, parse_mode: "Markdown" }
         );
       } catch (pnlErr: any) {
         console.error("PnL card failed:", pnlErr);
@@ -4528,6 +4744,7 @@ async function executeSellFromActiveMint(ctx: any, userId: number, pct: number) 
 
 // Sell Token Screen Actions
 bot.action("ST_REFRESH", async (ctx) => {
+  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery("🔄 Refreshing...");
   const userId = ctx.from!.id;
   const mint = activeSellMint.get(userId);
@@ -4536,12 +4753,133 @@ bot.action("ST_REFRESH", async (ctx) => {
 });
 
 bot.action("ST_RETURN", async (ctx) => {
+  clearUserRefresh(ctx.from!.id);
   await ctx.answerCbQuery();
   await showBuyTokenMenu(ctx, ctx.from!.id);
 });
 
+bot.action("ST_COPY_CA", async (ctx) => {
+  await ctx.answerCbQuery();
+  const mint = activeSellMint.get(ctx.from!.id);
+  if (mint) await ctx.reply(`\`${mint}\``, { parse_mode: "Markdown" });
+});
+
+bot.action("ST_SELL_INITIALS", async (ctx) => {
+  await ctx.answerCbQuery("💰 Selling initials...");
+  const userId = ctx.from!.id;
+  const mintStr = activeSellMint.get(userId);
+  if (!mintStr) { await ctx.reply("❌ No active token."); return; }
+  const u = getUser(userId);
+  const selectedName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+  const def = u.wallets.find(w => w.name === selectedName) ?? getDefaultWallet(userId);
+  if (!def) { await ctx.reply("No wallet found."); return; }
+
+  const pos = (u.positions ?? []).find((p: any) => p.mint === mintStr && p.wallet === def.name);
+  if (!pos || pos.entry <= 0) { await ctx.reply("❌ No entry price found. Can't calculate initials."); return; }
+
+  const info = await fetchTokenInfo(mintStr).catch(() => null);
+  if (!info || info.priceSOL <= 0) { await ctx.reply("❌ Can't fetch token price."); return; }
+
+  const holding = await getTokenHolding(new PublicKey(def.pubkey), new PublicKey(mintStr)).catch(() => null);
+  if (!holding) { await ctx.reply("❌ No token balance found."); return; }
+
+  const currentValueSol = holding.uiAmount * info.priceSOL;
+  if (currentValueSol <= 0) { await ctx.reply("❌ Token value is 0."); return; }
+
+  const pctToSell = Math.min(100, Math.ceil((pos.entry / currentValueSol) * 100));
+  await executeSellFromActiveMint(ctx, userId, pctToSell);
+});
+
+bot.action("ST_PCT_75", async (ctx) => {
+  await ctx.answerCbQuery("⏳ Selling 75%...");
+  await executeSellFromActiveMint(ctx, ctx.from!.id, 75);
+});
+
+bot.action("ST_SELL_X_SOL", async (ctx) => {
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_SELL_X_SOL");
+  await ctx.reply("💬 Enter amount in SOL to sell worth of tokens (e.g. 0.05):");
+});
+
+bot.action("ST_SELL_X_TOKENS", async (ctx) => {
+  await ctx.answerCbQuery();
+  setFlow(ctx.from!.id, "AWAIT_SELL_X_TOKENS");
+  await ctx.reply("💬 Enter number of tokens to sell (e.g. 10000):");
+});
+
+bot.action("ST_DELETE_POS", async (ctx) => {
+  clearUserRefresh(ctx.from!.id);
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const mintStr = activeSellMint.get(userId);
+  if (!mintStr) return;
+  const u = getUser(userId);
+  const selectedName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+  u.positions = (u.positions ?? []).filter((p: any) => !(p.mint === mintStr && p.wallet === selectedName));
+  setUser(u);
+  activeSellMint.delete(userId);
+  await ctx.reply("🗑 Position deleted.");
+  await showBuyTokenMenu(ctx, userId);
+});
+
+bot.action("ST_PREV_POS", async (ctx) => {
+  clearUserRefresh(ctx.from!.id);
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const u = getUser(userId);
+  const positions = u.positions ?? [];
+  if (positions.length === 0) return;
+  const currentMint = activeSellMint.get(userId);
+  const idx = positions.findIndex((p: any) => p.mint === currentMint);
+  const prevIdx = idx <= 0 ? positions.length - 1 : idx - 1;
+  activeSellMint.set(userId, positions[prevIdx].mint);
+  await showSellTokenMenu(ctx, userId);
+});
+
+bot.action("ST_NEXT_POS", async (ctx) => {
+  clearUserRefresh(ctx.from!.id);
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const u = getUser(userId);
+  const positions = u.positions ?? [];
+  if (positions.length === 0) return;
+  const currentMint = activeSellMint.get(userId);
+  const idx = positions.findIndex((p: any) => p.mint === currentMint);
+  const nextIdx = idx >= positions.length - 1 ? 0 : idx + 1;
+  activeSellMint.set(userId, positions[nextIdx].mint);
+  await showSellTokenMenu(ctx, userId);
+});
+
 bot.action("ST_WALLET", async (ctx) => {
-  await ctx.answerCbQuery("Wallet switching coming soon");
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const u = getUser(userId);
+  if (!u.wallets.length) { await ctx.answerCbQuery("No wallets found."); return; }
+  const current = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+  const buttons = u.wallets.map((w) => [
+    Markup.button.callback(
+      `${w.name === current ? "✅" : "⬜"} ${w.name}`,
+      `ST_WALLET_SELECT_${w.id}`
+    ),
+  ]);
+  buttons.push([Markup.button.callback("❌ Cancel", "ST_WALLET_CANCEL")]);
+  await ctx.reply("Select wallet to sell from:", Markup.inlineKeyboard(buttons));
+});
+
+bot.action(/^ST_WALLET_SELECT_(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from!.id;
+  const walletId = ctx.match[1];
+  const u = getUser(userId);
+  const wallet = u.wallets.find((w) => w.id === walletId);
+  if (!wallet) { await ctx.answerCbQuery("Wallet not found."); return; }
+  selectedPositionWallet.set(userId, wallet.name);
+  await showSellTokenMenu(ctx, userId);
+});
+
+bot.action("ST_WALLET_CANCEL", async (ctx) => {
+  await ctx.answerCbQuery();
+  await showSellTokenMenu(ctx, ctx.from!.id);
 });
 
 bot.action("ST_TOGGLE_MULTI", async (ctx) => {
@@ -4817,7 +5155,7 @@ bot.on("callback_query", async (ctx) => {
 
           await ctx.replyWithPhoto(
             { source: png },
-            { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @SolPilotBot`, parse_mode: "Markdown" }
+            { caption: `${pnlPct >= 0 ? "📈" : "📉"} *${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(1)}%* on ${info?.symbol ?? "token"} — traded on @AtlasSolanaTradeBot`, parse_mode: "Markdown" }
           );
         } catch (pnlErr: any) {
           console.error("PnL card generation failed:", pnlErr);
@@ -4875,7 +5213,14 @@ type Flow =
   | "AWAIT_SET_MAX_LIQ"
   | "AWAIT_POSITION_CA"
   | "AWAIT_RENAME_WALLET"
-  | "AWAIT_COPY_SIZE";
+  | "AWAIT_COPY_SIZE"
+  | "AWAIT_SELL_X_SOL"
+  | "AWAIT_SELL_X_TOKENS"
+  | "AWAIT_BUY_X_SOL"
+  | "AWAIT_BUY_X_TOKENS"
+  | "AWAIT_BUY_LIMIT_TRIGGER_VALUE"
+  | "AWAIT_BUY_LIMIT_AMOUNT"
+  | "AWAIT_BUY_LIMIT_DURATION";
 
 const userFlow = new Map<number, Flow>();
 const selectedPositionWallet = new Map<number, string>();
@@ -5201,6 +5546,120 @@ bot.on("text", async (ctx, next) => {
     return;
   }
 
+  if (flow === "AWAIT_BUY_X_SOL") {
+    const amt = parseFloat(txt);
+    if (isNaN(amt) || amt <= 0) {
+      await ctx.reply("❌ Invalid amount. Enter a positive number like 0.25, or /cancel.");
+      return;
+    }
+    setFlow(userId, "NONE");
+    await executeBuyFromActiveMint(ctx, userId, amt);
+    return;
+  }
+
+  if (flow === "AWAIT_BUY_X_TOKENS") {
+    const amt = parseFloat(txt);
+    if (isNaN(amt) || amt <= 0) {
+      await ctx.reply("❌ Invalid token amount. Enter a positive number, or /cancel.");
+      return;
+    }
+    const mint = activeBuyMint.get(userId);
+    if (!mint) { await ctx.reply("❌ No active token."); setFlow(userId, "NONE"); return; }
+    const info = await fetchTokenInfo(mint);
+    if (!info || info.priceSOL <= 0) { await ctx.reply("❌ Could not fetch token price."); return; }
+    setFlow(userId, "NONE");
+    const solAmt = amt * info.priceSOL;
+    await executeBuyFromActiveMint(ctx, userId, solAmt);
+    return;
+  }
+
+  if (flow === "AWAIT_BUY_LIMIT_TRIGGER_VALUE") {
+    const val = parseFloat(txt);
+    if (isNaN(val) || val <= 0) {
+      await ctx.reply("❌ Invalid value. Try again or /cancel.");
+      return;
+    }
+    const mint = activeBuyMint.get(userId);
+    if (!mint) { await ctx.reply("❌ No active token."); setFlow(userId, "NONE"); return; }
+    const d = getBuyLimitDraft(userId);
+    setFlow(userId, "NONE");
+    const uu = getUser(userId);
+    if (!(uu as any).buyLimits) (uu as any).buyLimits = [];
+    (uu as any).buyLimits.push({
+      id: crypto.randomUUID(),
+      mint,
+      triggerType: d.triggerType,
+      triggerValue: val,
+      amountSol: d.amountSol,
+      durationHours: d.durationHours,
+      multiBuy: d.multiBuy,
+      createdAt: new Date().toISOString(),
+    });
+    setUser(uu);
+    buyLimitDrafts.delete(userId);
+    await ctx.reply(`✅ Buy limit order added!\nWill buy *${d.amountSol} SOL* of \`${shortAddr(mint)}\` when ${d.triggerType === "PRICE" ? "price" : "MC"} hits *${val}*`, { parse_mode: "Markdown" });
+    await showBuyLimitMenu(ctx, userId);
+    return;
+  }
+
+  if (flow === "AWAIT_BUY_LIMIT_AMOUNT") {
+    const val = parseFloat(txt);
+    if (isNaN(val) || val <= 0) {
+      await ctx.reply("❌ Invalid amount. Enter a positive SOL amount like 0.1, or /cancel.");
+      return;
+    }
+    setBuyLimitDraft(userId, { amountSol: val });
+    setFlow(userId, "NONE");
+    await ctx.reply(`✅ Buy amount set to *${val} SOL*`, { parse_mode: "Markdown" });
+    await showBuyLimitMenu(ctx, userId);
+    return;
+  }
+
+  if (flow === "AWAIT_BUY_LIMIT_DURATION") {
+    const val = parseInt(txt);
+    if (isNaN(val) || val <= 0) {
+      await ctx.reply("❌ Invalid duration. Enter hours as a number like 24, or /cancel.");
+      return;
+    }
+    setBuyLimitDraft(userId, { durationHours: val });
+    setFlow(userId, "NONE");
+    await ctx.reply(`✅ Duration set to *${val}h*`, { parse_mode: "Markdown" });
+    await showBuyLimitMenu(ctx, userId);
+    return;
+  }
+    const solAmt = parseFloat(txt);
+    if (isNaN(solAmt) || solAmt <= 0) { await ctx.reply("❌ Invalid amount."); return; }
+    const mintStr = activeSellMint.get(userId);
+    if (!mintStr) { await ctx.reply("❌ No active token."); return; }
+    const selectedName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+    const def = u.wallets.find((w: any) => w.name === selectedName) ?? getDefaultWallet(userId);
+    if (!def) return;
+    const info = await fetchTokenInfo(mintStr).catch(() => null);
+    const holding = await getTokenHolding(new PublicKey(def.pubkey), new PublicKey(mintStr)).catch(() => null);
+    if (!info || !holding || info.priceSOL <= 0) { await ctx.reply("❌ Can't fetch token data."); return; }
+    const totalValueSol = holding.uiAmount * info.priceSOL;
+    const pct = Math.min(100, Math.ceil((solAmt / totalValueSol) * 100));
+    setFlow(userId, "NONE");
+    await executeSellFromActiveMint(ctx, userId, pct);
+    return;
+  }
+
+  if (flow === "AWAIT_SELL_X_TOKENS") {
+    const tokenAmt = parseFloat(txt);
+    if (isNaN(tokenAmt) || tokenAmt <= 0) { await ctx.reply("❌ Invalid amount."); return; }
+    const mintStr = activeSellMint.get(userId);
+    if (!mintStr) { await ctx.reply("❌ No active token."); return; }
+    const selectedName = selectedPositionWallet.get(userId) || getDefaultWallet(userId)?.name;
+    const def = u.wallets.find((w: any) => w.name === selectedName) ?? getDefaultWallet(userId);
+    if (!def) return;
+    const holding = await getTokenHolding(new PublicKey(def.pubkey), new PublicKey(mintStr)).catch(() => null);
+    if (!holding || holding.uiAmount <= 0) { await ctx.reply("❌ No token balance found."); return; }
+    const pct = Math.min(100, Math.ceil((tokenAmt / holding.uiAmount) * 100));
+    setFlow(userId, "NONE");
+    await executeSellFromActiveMint(ctx, userId, pct);
+    return;
+  }
+
   if (flow === "AWAIT_SELL_CA") {
     let mint: PublicKey;
     try {
@@ -5521,18 +5980,25 @@ async function runSellLimitMonitor() {
           ).catch(() => {});
 
           console.log(`✅ Sell limit executed for user ${u.userId}: ${sig}`);
-        } catch (e) {
-          console.error(`Sell limit execution failed for user ${u.userId}:`, e);
+        } catch (e: any) {
+          const msg = e?.message ?? String(e);
+          const clean = msg.includes("0x1771") || msg.includes("insufficient funds")
+            ? "Insufficient SOL for fees"
+            : msg.includes("Simulation failed")
+            ? "Transaction simulation failed"
+            : msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
+          console.error(`Sell limit execution failed for user ${u.userId}: ${clean}`);
+          bot.telegram.sendMessage(u.userId, `⚠️ Sell limit failed: ${clean}`, { parse_mode: "Markdown" }).catch(() => {});
         }
       }
     }
   }
 }
 
-// Sell limit monitor disabled until paid RPC is available
-// setInterval(() => {
-//   runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
-// }, 300_000);
+// Sell limit monitor — runs every 5 minutes
+setInterval(() => {
+  runSellLimitMonitor().catch(e => console.error("Sell limit monitor error:", e));
+}, 300_000);
 
 /* =========================
    ADMIN COMMANDS
@@ -5609,7 +6075,67 @@ Failed: *${failed}*`, { parse_mode: "Markdown" });
     return;
   }
 
-  await ctx.reply("🔧 *Admin Commands*\n\n/admin balance — fee wallet balance\n/admin withdraw <addr> <amt> — withdraw\n/admin stats — bot stats\n/admin broadcast <msg> — message all users\n/admin blacklist add/remove/list — token blacklist", { parse_mode: "Markdown" });
+  if (cmd === "partner") {
+    const subcmd = args[1];
+    const partnerIdArg = parseInt(args[2]);
+    if (subcmd === "add" && partnerIdArg) {
+      // Check if user exists in db
+      const db = loadDB();
+      const partnerUser = db.users[String(partnerIdArg)];
+      if (!partnerUser) {
+        await ctx.reply(`❌ User \`${partnerIdArg}\` not found in database. They need to have started the bot first.`, { parse_mode: "Markdown" });
+        return;
+      }
+      addPartner(partnerIdArg);
+      await ctx.reply(
+        `✅ *Partner Added*\n\n` +
+        `User ID: \`${partnerIdArg}\`\n` +
+        `Referral code: \`${partnerUser.referralCode}\`\n\n` +
+        `They now earn *20% forever* on all referral trades.\n\n` +
+        `To remove: /admin partner remove ${partnerIdArg}`,
+        { parse_mode: "Markdown" }
+      );
+    } else if (subcmd === "remove" && partnerIdArg) {
+      if (!isPartner(partnerIdArg)) {
+        await ctx.reply(`❌ User \`${partnerIdArg}\` is not a partner.`, { parse_mode: "Markdown" });
+        return;
+      }
+      removePartner(partnerIdArg);
+      await ctx.reply(
+        `✅ *Partner Removed*\n\n` +
+        `User ID: \`${partnerIdArg}\`\n\n` +
+        `They are now on standard 20% / 30 days.`,
+        { parse_mode: "Markdown" }
+      );
+    } else if (subcmd === "list") {
+      const list = [...getPartners()];
+      if (!list.length) {
+        await ctx.reply("🤝 No partners yet.\n\nAdd one with: /admin partner add <userId>");
+        return;
+      }
+      const db = loadDB();
+      const lines = list.map(id => {
+        const u = db.users[String(id)] as any;
+        const code = u?.referralCode ?? "unknown";
+        return `• \`${id}\` — ref code: \`${code}\``;
+      }).join("\n");
+      await ctx.reply(
+        `🤝 *Partners (${list.length})*\n\n${lines}\n\nTo remove: /admin partner remove <userId>`,
+        { parse_mode: "Markdown" }
+      );
+    } else {
+      await ctx.reply(
+        `🤝 *Partner Commands*\n\n` +
+        `/admin partner add <userId> — add partner (20% forever)\n` +
+        `/admin partner remove <userId> — remove partner\n` +
+        `/admin partner list — view all partners`,
+        { parse_mode: "Markdown" }
+      );
+    }
+    return;
+  }
+
+  await ctx.reply("🔧 *Admin Commands*\n\n/admin balance — fee wallet balance\n/admin withdraw <addr> <amt> — withdraw\n/admin stats — bot stats\n/admin broadcast <msg> — message all users\n/admin blacklist add/remove/list — token blacklist\n/admin partner add/remove/list <userId> — manage partners", { parse_mode: "Markdown" });
 });
 
 bot.command("refstats", async (ctx) => {
@@ -5656,7 +6182,7 @@ bot.command("refstats", async (ctx) => {
 
   rebuildWalletFollowers();
   syncHeliusWebhookFromDB().catch(e => console.error("Helius sync error:", e));
-  startWebhookServer(handleHeliusEvent);
+  startWebhookServer(handleHeliusEvent, connection, bot);
 
   // Clear any stale polling sessions before launch
   await bot.telegram.deleteWebhook({ drop_pending_updates: true });
