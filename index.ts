@@ -2060,64 +2060,13 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const BADGE_R   = 14;
 
   // Build rich SVG background — dark navy with glowing orbs and colour wash
-  const bgSvg = Buffer.from(
-    `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">` +
-    `<defs>` +
-      // Dark gradient base
-      `<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">` +
-        `<stop offset="0%"   stop-color="#060914"/>` +
-        `<stop offset="100%" stop-color="#0d1525"/>` +
-      `</linearGradient>` +
-      // Colour glow top-right
-      `<radialGradient id="glow1" cx="85%" cy="10%" r="55%">` +
-        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.18"/>` +
-        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
-      `</radialGradient>` +
-      // Subtle second glow bottom-left
-      `<radialGradient id="glow2" cx="10%" cy="90%" r="40%">` +
-        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.10"/>` +
-        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
-      `</radialGradient>` +
-      // Top line gradient
-      `<linearGradient id="tl" x1="0" y1="0" x2="1" y2="0">` +
-        `<stop offset="0%"   stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="1"/>` +
-        `<stop offset="70%"  stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0.2"/>` +
-        `<stop offset="100%" stop-color="rgb(${pc.r},${pc.g},${pc.b})" stop-opacity="0"/>` +
-      `</linearGradient>` +
-    `</defs>` +
-    // Base background
-    `<rect width="${W}" height="${H}" fill="url(#bg)"/>` +
-    // Glow washes
-    `<rect width="${W}" height="${H}" fill="url(#glow1)"/>` +
-    `<rect width="${W}" height="${H}" fill="url(#glow2)"/>` +
-    // Decorative circles top-right
-    `<circle cx="820" cy="60"  r="180" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.04"/>` +
-    `<circle cx="820" cy="60"  r="120" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.04"/>` +
-    `<circle cx="820" cy="460" r="140" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.03"/>` +
-    // Left accent bar — thicker, brighter
-    `<rect x="0" y="0" width="5" height="${H}" fill="rgb(${pc.r},${pc.g},${pc.b})"/>` +
-    // Top accent line
-    `<rect x="0" y="0" width="${W}" height="3" fill="url(#tl)"/>` +
-    // Underline below token name
-    `<rect x="48" y="178" width="60" height="3" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.9" rx="2"/>` +
-    // Divider lines
-    `<rect x="48" y="${DIVIDER_Y}" width="804" height="1" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.20"/>` +
-    `<rect x="48" y="${FOOTER_Y}" width="804" height="1" fill="rgba(255,255,255,0.06)"/>` +
-    // Column labels with letter-spacing
-    `<text x="48"  y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">INVESTED</text>` +
-    `<text x="310" y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">PAYOUT</text>` +
-    `<text x="560" y="${DIVIDER_Y + 24}" font-family="DejaVu Sans,sans-serif" font-weight="bold" font-size="11" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.65" letter-spacing="2.5">PNL</text>` +
-    // Multiplier badge — glassy dark with coloured border + inner glow
-    `<rect x="${BADGE_X}" y="${BADGE_Y}" width="${BADGE_W}" height="${BADGE_H}" rx="${BADGE_R}" ry="${BADGE_R}" fill="rgba(6,10,22,0.82)" stroke="rgb(${pc.r},${pc.g},${pc.b})" stroke-width="1.5"/>` +
-    `<rect x="${BADGE_X+2}" y="${BADGE_Y+2}" width="${BADGE_W-4}" height="${BADGE_H-4}" rx="${BADGE_R-2}" ry="${BADGE_R-2}" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.06"/>` +
-    `<text x="${BADGE_X + BADGE_W/2}" y="${BADGE_Y + BADGE_H - 12}" text-anchor="middle" font-family="DejaVu Sans,sans-serif" font-size="10" fill="rgb(${pc.r},${pc.g},${pc.b})" opacity="0.6" letter-spacing="2">MULTIPLIER</text>` +
-    `</svg>`
-  );
-
-  const bg = await sharp(bgSvg).png().toBuffer();
+  // Load pnl_bg.png as the background
+  const bgPath = pathMod.join(process.cwd(), "pnl_bg.png");
+  const bg = fsMod.existsSync(bgPath)
+    ? await sharp(bgPath).resize(W, H).png().toBuffer()
+    : await sharp({ create: { width: W, height: H, channels: 4, background: { r: 6, g: 12, b: 26, alpha: 1 } } }).png().toBuffer();
 
   // Text elements — bigger token name, crisper labels
-  const tAtlas = await makeText("ATLAS | SOLANA",                            11, true,  pc,     220, 20);
   const tToken = await makeText(input.mintShort,                             34, true,  white,  600, 52);
   const tHeld  = await makeText("Held for " + input.heldFor,                 14, false, muted,  320, 26);
   const tPnl   = await makeText(pnlPctText,                                 118, true,  pc,     700, 150);
@@ -2130,7 +2079,6 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
 
   return sharp(bg)
     .composite([
-      { input: tAtlas, top: 26,              left: 48  },
       { input: tToken, top: 48,              left: 48  },
       { input: tHeld,  top: 108,             left: 48  },
       { input: tMult,  top: BADGE_Y + 12,    left: BADGE_X + Math.floor((BADGE_W - 160) / 2) },
