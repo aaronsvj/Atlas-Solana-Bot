@@ -175,7 +175,18 @@ export function startWebhookServer(
 
   app.get("/api/partners", requireKey, (_req: any, res: any) => {
     const db = loadDB() as any;
-    res.json({ partners: db.partners ?? [] });
+    const partners = (db.partners ?? []).map((p: any) => {
+      const userId = typeof p === "number" ? p : p.userId;
+      const u = db.users?.[String(userId)];
+      return {
+        userId,
+        referralCode: u?.referralCode ?? p.referralCode ?? "",
+        addedAt: p.addedAt ?? u?.createdAt ?? "",
+        lifetimeSolEarned: u?.referrals?.lifetimeSolEarned ?? 0,
+        totalReferrals: u?.referrals?.telegramReferrals ?? 0,
+      };
+    });
+    res.json({ ok: true, partners });
   });
 
   app.post("/api/partners", requireKey, (req: any, res: any) => {
