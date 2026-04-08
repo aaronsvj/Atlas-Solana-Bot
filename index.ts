@@ -2021,9 +2021,9 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
   const fontFile = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans.ttf");
   const fontBold = pathMod.join(process.cwd(), "node_modules", "dejavu-fonts-ttf", "ttf", "DejaVuSans-Bold.ttf");
 
-  // Profit = vibrant green, Loss = vivid red
-  const pc     = isProfit ? { r: 0, g: 255, b: 135 } : { r: 255, g: 59, b: 59 };
-  const pcDim  = isProfit ? { r: 0, g: 200, b: 100 } : { r: 200, g: 40, b: 40 };
+  // Profit = blue, Loss = vivid red
+  const pc     = isProfit ? { r: 26, g: 140, b: 255 } : { r: 255, g: 59, b: 59 };
+  const pcDim  = isProfit ? { r: 18, g: 100, b: 200 } : { r: 200, g: 40, b: 40 };
   const white  = { r: 255, g: 255, b: 255 };
   const silver = { r: 200, g: 210, b: 220 };
   const muted  = { r: 120, g: 135, b: 155 };
