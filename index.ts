@@ -126,7 +126,8 @@ async function creditReferrerFee(userId: number, feeSol: number): Promise<void> 
       if (Date.now() - userCreatedAt > 30 * 24 * 60 * 60 * 1000) return;
     }
 
-    const referrerShare = feeSol * 0.20;
+    const rate = (referrer.referralRate ?? 20) / 100;
+    const referrerShare = feeSol * rate;
     const referrerShareLamports = Math.floor(referrerShare * LAMPORTS_PER_SOL);
     if (referrerShareLamports < 1000) return; // skip dust
 
@@ -344,6 +345,7 @@ type UserRecord = {
   referralCode: string;
   referredBy: string | null;
   referrals: ReferralStats;
+  referralRate?: number;
 };
 
 

@@ -184,9 +184,22 @@ export function startWebhookServer(
         addedAt: p.addedAt ?? u?.createdAt ?? "",
         lifetimeSolEarned: u?.referrals?.lifetimeSolEarned ?? 0,
         totalReferrals: u?.referrals?.telegramReferrals ?? 0,
+        referralRate: u?.referralRate ?? 20,
       };
     });
     res.json({ ok: true, partners });
+  });
+
+  app.post("/api/partners/rate", requireKey, (req: any, res: any) => {
+    const { userId, rate } = req.body ?? {};
+    if (!userId || rate == null) return res.status(400).json({ error: "userId and rate required" });
+    const r = Number(rate);
+    if (isNaN(r) || r < 1 || r > 100) return res.status(400).json({ error: "rate must be 1-100" });
+    const db = loadDB() as any;
+    if (!db.users?.[String(userId)]) return res.status(404).json({ error: "User not found" });
+    db.users[String(userId)].referralRate = r;
+    saveDB(db);
+    res.json({ ok: true });
   });
 
   app.post("/api/partners", requireKey, (req: any, res: any) => {
