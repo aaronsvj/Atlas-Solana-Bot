@@ -2069,7 +2069,7 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
 
   // Text elements — bigger token name, crisper labels
   // No tAtlas — badge is baked into pnl_bg.png
-  const tToken = await makeText(input.mintShort,                             32, true,  white,  580, 48);
+  const tToken = await makeText(input.mintShort,                             38, true,  white,  640, 56);
   const tHeld  = await makeText("Held for " + input.heldFor,                 13, false, muted,  300, 24);
   const tPnl   = await makeText(pnlPctText,                                 115, true,  pc,     660, 145);
   const tMult  = await makeText(multiplier,                                  28, true,  pc,     150, 42);
@@ -2083,7 +2083,7 @@ async function renderPnlCardPng(input: PnlCardInput): Promise<Buffer> {
     .composite([
       { input: tToken, top: 72,              left: 22  },  // below badge in bg
       { input: tHeld,  top: 126,             left: 22  },
-      { input: tPnl,   top: 158,             left: 14  },
+      { input: tPnl,   top: 188,             left: 14  },
       { input: tMult,  top: BADGE_Y + 14,    left: BADGE_X + Math.floor((BADGE_W - 150) / 2) },
       { input: tIV,    top: DIVIDER_Y + 30,  left: 22  },
       { input: tPV,    top: DIVIDER_Y + 30,  left: 290 },
